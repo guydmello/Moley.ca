@@ -1,6 +1,18 @@
 import { normalizeName, safeDisplayName } from '@moley/shared';
 import type { StoredPlayer } from './types';
 
+const API_ORIGINS = new Set([
+  'https://moley.ca',
+  'https://www.moley.ca',
+  'https://moley.guyrdmello.workers.dev',
+  'http://127.0.0.1:5190',
+  'http://localhost:5190'
+]);
+
+export function apiCorsOrigin(origin: string): string | undefined {
+  return API_ORIGINS.has(origin) ? origin : undefined;
+}
+
 export function newSecret(bytes = 24): string {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
   return btoa(String.fromCharCode(...data)).replace(/[+/=]/g, (char) => ({ '+': '-', '/': '_', '=': '' })[char]!);

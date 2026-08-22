@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { normalizeRoomCode } from '@moley/shared';
 import { GameRoom } from './room/GameRoom';
-import { json, SlidingRateLimit } from './security';
+import { apiCorsOrigin, json, SlidingRateLimit } from './security';
 import type { Env } from './types';
 import { canonicalHostRedirect } from './canonical';
 
@@ -18,11 +18,18 @@ const codeWords = [
 
 app.use('*', async (c, next) => {
   const redirect = canonicalHostRedirect(c.req.url);
-  if (redirect) return c.redirect(redirect, 301);
+  if (redirect) {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    return c.redirect(redirect, 301);
+  }
   await next();
+  c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
 });
 
-app.use('/api/*', cors({ origin: (origin) => origin, allowMethods: ['GET', 'POST', 'OPTIONS'], allowHeaders: ['Content-Type'], maxAge: 86400 }));
+app.use('/api/*', cors({ origin: apiCorsOrigin, allowMethods: ['GET', 'POST', 'OPTIONS'], allowHeaders: ['Content-Type'], maxAge: 86400 }));
 
 function ipFrom(c: { req: { header(name: string): string | undefined } }): string {
   return c.req.header('CF-Connecting-IP') ?? 'local';

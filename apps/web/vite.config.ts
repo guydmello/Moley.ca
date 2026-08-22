@@ -23,7 +23,7 @@ export default defineConfig({
           { src: '/icon-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
         ]
       },
-      workbox: { navigateFallbackDenylist: [/^\/api\//], runtimeCaching: [] }
+      workbox: { navigateFallbackDenylist: [/^\/api\//], runtimeCaching: [], sourcemap: false }
     })
   ],
   server: {
@@ -31,5 +31,5 @@ export default defineConfig({
     strictPort: true,
     proxy: { '/api': { target: 'http://127.0.0.1:8787', ws: true } }
   },
-  build: { target: 'es2022', sourcemap: true }
+  build: { target: 'es2022', sourcemap: false }
 });
