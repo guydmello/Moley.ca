@@ -57,3 +57,21 @@ If the Cloudflare Worker or migrated DNS fails critically:
 Nameserver changes are cached and rollback is not instantaneous. The complete
 GoDaddy DNS export must be compared with Cloudflare's imported records before
 the authoritative nameserver change.
+
+## Cutover execution
+
+- Cloudflare zone: personal account, Free plan
+- Assigned nameservers: `christian.ns.cloudflare.com` and
+  `uma.ns.cloudflare.com`
+- GoDaddy DNSSEC: off before delegation change
+- GoDaddy accepted the custom nameserver change on 2026-08-22
+- Cloudflare SSL/TLS mode: Full (strict)
+- Worker custom domains: `moley.ca` and `www.moley.ca`
+- Worker preview retained at `https://moley.guyrdmello.workers.dev`
+- Worker version staged before registry propagation:
+  `ff92d482-71a4-4d56-aa11-6aea4bf4067e`
+
+The imported apex and `www` records were removed only from the pending
+Cloudflare zone after the GoDaddy export was committed. Wrangler then created
+Worker-managed records for both hostnames. The public delegation still used
+GoDaddy during this staging step, so the former Render deployment stayed live.
