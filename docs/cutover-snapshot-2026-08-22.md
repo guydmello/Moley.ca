@@ -30,8 +30,9 @@ Observed from public authoritative DNS on 2026-08-22 in Toronto:
 
 No public apex `AAAA`, `MX`, `TXT`, or `CAA` answers were returned by the
 queries used for this snapshot. No `_dmarc.moley.ca` TXT answer was returned.
-This is not an exhaustive DNS-zone export: GoDaddy's zone export remains the
-authoritative backup for uncommon subdomains and verification records.
+The GoDaddy dashboard subsequently confirmed exactly six records and no MX or
+mail records. The complete exported zone is preserved at
+`docs/dns-backups/moley.ca-godaddy-2026-08-22.txt`.
 
 ## Live web behaviour observed before migration
 

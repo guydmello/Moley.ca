@@ -1,0 +1,33 @@
+; Domain: moley.ca
+; Exported (y-m-d hh:mm:ss): 2026-08-22 09:49:26
+;
+; This file is intended for use for informational and archival
+; purposes ONLY and MUST be edited before use on a production
+; DNS server.
+;
+; In particular, you must update the SOA record with the correct
+; authoritative name server and contact e-mail address information,
+; and add the correct NS records for the name servers which will be
+; authoritative for this domain.
+
+$ORIGIN moley.ca.
+
+; SOA Record
+@	3600	 IN 	SOA	ns73.domaincontrol.com.	dns.jomax.net. (
+					2024070203
+					28800
+					7200
+					604800
+					3600
+					)
+
+; A Record
+@	600	 IN 	A	216.24.57.1
+
+; NS Record
+@	3600	 IN 	NS	ns73.domaincontrol.com.
+@	3600	 IN 	NS	ns74.domaincontrol.com.
+
+; CNAME Record
+www	1800	 IN 	CNAME	realtime-chat-frontend-3fow.onrender.com.
+_domainconnect	3600	 IN 	CNAME	_domainconnect.gd.domaincontrol.com.
