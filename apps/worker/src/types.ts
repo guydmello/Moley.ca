@@ -71,6 +71,7 @@ export type RoomState = {
 
 export type Env = {
   GAME_ROOMS: DurableObjectNamespace;
+  ABUSE_GATE: DurableObjectNamespace;
   ASSETS: Fetcher;
   AI?: Ai;
   AI_MODEL?: string;

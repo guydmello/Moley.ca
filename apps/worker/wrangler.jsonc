@@ -13,10 +13,16 @@
     "run_worker_first": true
   },
   "durable_objects": {
-    "bindings": [{ "name": "GAME_ROOMS", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "GAME_ROOMS", "class_name": "GameRoom" },
+      { "name": "ABUSE_GATE", "class_name": "AbuseGate" }
+    ]
   },
   "ai": { "binding": "AI" },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["AbuseGate"] }
+  ],
   "observability": { "enabled": true, "head_sampling_rate": 0.1 },
   "routes": [
     { "pattern": "moley.ca", "custom_domain": true },

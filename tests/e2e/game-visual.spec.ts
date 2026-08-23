@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('lobby and private role screens fit phone and desktop widths', async ({ page, isMobile }, testInfo) => {
-  test.skip(Boolean(isMobile), 'The desktop project explicitly controls both review widths.');
+  test.skip(Boolean(isMobile) || testInfo.project.name !== 'desktop', 'The desktop project explicitly controls both review widths.');
   await page.addInitScript(() => localStorage.setItem('moley:tutorial', 'done'));
   for (const width of [375, 1440]) {
     await page.setViewportSize({ width, height: width === 375 ? 844 : 1000 });

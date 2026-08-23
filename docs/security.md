@@ -12,25 +12,25 @@ Browsers are untrusted. A participant can modify JavaScript, local state, WebSoc
 | Read another player’s word | Per-socket allowlist serialization; Mole and spectator envelopes omit the word |
 | Forge host action | Host flag resolved from socket attachment; room code is not authorization |
 | Vote twice or self-vote | One stored vote per seat, stage check, target validation, self-target rejection |
-| Replay an event | Random event ID plus rolling deduplication set and client sequence |
-| Hijack a seat | 192-bit URL-safe reconnect token; names do not resume seats |
-| Two active tabs | Both attach to one seat; disconnect logic checks other open sockets |
+| Replay an event | Random event ID, rolling deduplication set, and monotonic sequence per socket |
+| Hijack a seat | 192-bit URL-safe reconnect token carried outside URLs; names do not resume seats |
+| Two active tabs | New socket replaces the prior socket for that seat |
 | XSS in names/chat/words | Unicode normalization, control-character stripping, max lengths, React text rendering, no dangerous HTML |
-| Huge/malformed payload | HTTP and WebSocket size caps, JSON failure handling, Zod schemas |
-| Message spam | Per-seat sliding window; IP-based create/join limits |
-| Room-code guessing | Rooms unlisted, create/join throttled, host authority held by private token |
+| Huge/malformed payload | Early HTTP and 128 KiB WebSocket size caps, JSON failure handling, Zod schemas |
+| Message spam | Durable per-network create/join throttles plus per-seat action/chat/drawing limits |
+| Room-code guessing | Four-word million-plus space, uniform status response, throttled join, private-token authority |
 | Timer/client-clock changes | Server timestamps and Durable Object alarms are authoritative |
 | AI secret leak | Server-only AI, output validation, secret/alias rejection, single retry policy and deterministic fallback |
 
-The Worker adds a restrictive Content Security Policy, denies framing and high-risk browser permissions, disables MIME sniffing, and uses a strict referrer policy. No credentials are shipped to the client.
+The Worker adds a restrictive production Content Security Policy, denies framing and high-risk browser permissions, disables MIME sniffing, isolates opener/resources, and uses a strict referrer policy. WebSockets validate the first-party Origin. No service credentials are shipped to the client.
 
 ## Information allowlists
 
-`publicState()` builds a new public object field by field. `privateState(player)` adds only that player’s permitted secret. The implementation does not serialize internal state and remove secrets afterward. Role-ready progress is aggregate-only so timing does not identify a Mole. Votes remain aggregate-only until the accusation is resolved.
+`publicState()` builds a new public object field by field. `publicSettings()` removes content pools and private host controls before any room snapshot leaves the object. `privateState(player)` adds only that player’s permitted secret and gives full editable settings only to the host in safe stages. The implementation does not serialize internal state and remove secrets afterward. Role-ready progress is aggregate-only so timing does not identify a Mole. Votes remain aggregate-only until the accusation is resolved.
 
 ## Data minimization
 
-Moley stores no accounts or contact details. Operational logs contain anonymous room lifecycle dimensions, not reconnect tokens, vote contents, or chat transcripts. Room state is isolated per Durable Object. A production cleanup job should delete completed rooms after 24 hours of inactivity and abandoned lobbies after two hours; alarms already remove expired disconnected seats.
+Moley stores no accounts or contact details. Operational logs contain anonymous room lifecycle dimensions, not reconnect tokens, vote contents, chat transcripts, or secret words. Room state is isolated per Durable Object. Alarms delete fully disconnected abandoned lobbies after two hours, inactive games after six hours, and completed matches after 24 hours; expired disconnected seats are removed after their reservation window.
 
 ## Pre-launch adversarial check
 
@@ -42,8 +42,8 @@ The automated core tests cover illegal transitions, scoring boundaries, tie cuto
 4. Submit a second vote, a self-vote, and a spectator vote.
 5. Inspect innocent, Mole, and display frames for forbidden fields.
 6. Join using `<script>alert(1)</script>` and confirm it renders only as text or is normalized.
-7. Send a payload above 4 KB and a malformed JSON frame.
-8. Open one seat in two tabs, close one, and verify the seat stays connected.
+7. Send a payload above 128 KiB and a malformed JSON frame.
+8. Open one seat in two tabs and verify the old socket is replaced.
 9. Create/join rapidly and verify friendly 429 responses.
 10. Lock the room and verify new players cannot take active seats.
 
@@ -56,4 +56,4 @@ Feature kill switches are enforced on the Worker, not merely hidden in the React
 
 The Game Health support code contains build/protocol, broad capability booleans, connection state, latency bucket data, stage and seat count. It excludes room codes, names, text content, role/word data, votes and identifiers.
 
-This section is a release regression note, not the separate comprehensive security or penetration audit planned after feature completion.
+The 2.5 pre-launch evidence and residual risks are recorded in `docs/security-summary.md` and `docs/final-audit-report.md`.

@@ -1,6 +1,6 @@
 {
   "name": "@moley/worker",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,9 +10,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@moley/game-core": "2.4.0",
-    "@moley/shared": "2.4.0",
-    "@moley/word-packs": "2.4.0",
+    "@moley/game-core": "2.5.0",
+    "@moley/shared": "2.5.0",
+    "@moley/word-packs": "2.5.0",
     "hono": "latest",
     "zod": "latest"
   },

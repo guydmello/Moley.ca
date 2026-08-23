@@ -1,9 +1,12 @@
 {
   "name": "moley",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "concurrently -k -n worker,web -c magenta,cyan \"npm run dev -w @moley/worker\" \"npm run dev -w @moley/web\"",
     "build": "npm run build -w @moley/web && npm run build -w @moley/worker",
@@ -17,6 +20,7 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "latest",
     "@playwright/test": "latest",
     "@types/node": "latest",
@@ -30,5 +34,7 @@
     "typescript-eslint": "latest",
     "vitest": "latest"
   },
-  "engines": { "node": ">=20.0.0" }
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }

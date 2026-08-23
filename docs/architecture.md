@@ -9,6 +9,7 @@ React/PWA client
   │ HTTPS create/join + versioned WebSocket events
   ▼
 Cloudflare Worker router
+  ├── durable per-network AbuseGate
   │ room code → idFromName(normalizedCode)
   ▼
 GameRoom Durable Object (one instance per room)
@@ -24,9 +25,9 @@ The frontend is built to static assets and served by the same Worker, so product
 
 ## Room identity and joining
 
-Room codes are three words selected with rejection-sampled cryptographic randomness. Inputs are case-, space-, and hyphen-insensitive. Codes deterministically address Durable Objects; initialization checks for collisions before claiming a room.
+Room codes are four words selected with cryptographic randomness from a space exceeding one million combinations. Inputs are case-, space-, and hyphen-insensitive. Codes deterministically address Durable Objects; initialization checks for collisions before claiming a room. Public status probes return a uniform response so codes cannot be enumerated without making a throttled join attempt.
 
-Creating or joining returns a random private reconnect token. The browser stores that token locally under the normalized room code. The token, not the memorable room code, owns the seat and any host privilege.
+Creating or joining returns a random private reconnect token. The browser stores that token locally under the normalized room code. It is sent in the WebSocket subprotocol rather than the URL, avoiding proxy and access-log leakage. The token, not the memorable room code, owns the seat and any host privilege.
 
 ## Canonical state
 
@@ -38,13 +39,13 @@ Public and private serialization are separate. Public state exposes only roster/
 
 Legal transitions are defined in `@moley/game-core`. Client events are validated by Zod, checked against the current stage, checked against the participant’s role/kind, and checked for host authority before mutation. Illegal transitions fail with a player-safe error and do not mutate room state.
 
-Moley 2.4 adds optional `DEFENCE`, `REVOTE`, and `ROUND_RECAP` stages. Classic has a zero-second defence and no revote, so its path remains the original simple flow. Completed round history is bounded to 24 rounds and contains only information already safe to reveal after a round.
+Moley 2.4 added optional `DEFENCE`, `REVOTE`, and `ROUND_RECAP` stages. Classic has a zero-second defence and no revote, so its path remains the original simple flow. Completed round history is bounded to 24 rounds, omits vector drawing bodies, and contains only information already safe to reveal after a round.
 
 Persisted v1 snapshots are normalized against current defaults when a Durable Object wakes. Missing feature, drawing, reaction, history, notebook, prediction and AFK fields are added without invalidating reconnect tokens or active scores.
 
 ## Compatibility and feature operations
 
-The browser sends `clientVersion` and `protocol` on WebSocket connection. The Worker advertises its supported protocol range from `/api/config` and rejects incompatible clients before accepting a socket. A current client presents a refresh-and-rejoin screen; the reconnect token remains device-local.
+The browser sends `clientVersion` and protocol 3 on WebSocket connection. The Worker advertises its supported protocol range from `/api/config` and rejects incompatible clients before accepting a socket. The Worker also validates Origin and the negotiated `moley.v3` subprotocol. A current client presents a refresh-and-rejoin screen; the reconnect token remains device-local.
 
 Feature lifecycle state is centrally typed and re-evaluated on room traffic. Security-sensitive controls are enforced in `GameRoom`, so a stale or modified client cannot use a killed feature. See `docs/feature-flags.md`.
 
@@ -61,19 +62,20 @@ Feature lifecycle state is centrally typed and re-evaluated on room traffic. Sec
 ## Realtime reliability
 
 - hibernatable WebSockets keep sleeping rooms inexpensive
-- 15-second client heartbeat and last-seen tracking
+- 15-second client heartbeat with direct `pong` replies that do not persist or fan out room snapshots
 - exponential reconnect with jitter
 - visibility and network-status recovery
 - session restoration after refresh
 - client event IDs with a rolling server deduplication window
 - client and server sequence numbers
+- one active socket per seat; opening another tab replaces the old socket
 - two-minute disconnected-seat reservation
 - ten-second host grace period, then transfer to the earliest connected human
 - Durable Object alarms for timers, cleanup, and host transfer
 
 ## Capacity
 
-There is no low product-level seat cap. Lists and turn rails are bounded/scrollable, chat history is capped, and payload history is truncated. The included load harness exercises a 100-seat room, multi-room fanout, voting bursts, chat bursts, and reconnect storms. Cloudflare account limits still apply; production capacity claims should be based on observed load results in the target account.
+Rooms accept at most 100 active players and 200 spectators. Lists and turn rails are bounded/scrollable, chat history is capped, and payload history is truncated. The included load harness exercises a 100-seat room, multi-room fanout, voting bursts, chat bursts, and reconnect storms. Cloudflare account limits still apply; production capacity claims must be based on observed target-account results rather than local tests alone.
 
 ## Repository
 

@@ -1,16 +1,24 @@
 import { z } from 'zod';
 
-export const APP_VERSION = '2.4.0';
-export const PROTOCOL_VERSION = 2 as const;
-export const MIN_PROTOCOL_VERSION = 2;
-export const MAX_PROTOCOL_VERSION = 2;
-export const ROOM_CODE_WORDS = 3;
+export const APP_VERSION = '2.5.0';
+export const PROTOCOL_VERSION = 3 as const;
+export const MIN_PROTOCOL_VERSION = 3;
+export const MAX_PROTOCOL_VERSION = 3;
+export const ROOM_CODE_WORDS = 4;
 export const MAX_NAME_LENGTH = 24;
 export const MAX_CHAT_LENGTH = 280;
 export const MAX_CLUE_LENGTH = 80;
 export const MAX_NOTE_LENGTH = 800;
-export const MAX_DRAWING_STROKES = 80;
-export const MAX_DRAWING_POINTS = 1600;
+export const MAX_DRAWING_STROKES = 32;
+export const MAX_DRAWING_POINTS = 240;
+export const MAX_WEBSOCKET_MESSAGE_LENGTH = 128 * 1024;
+
+export const ROOM_CODE_PARTS = [
+  ['amber', 'blue', 'brave', 'bright', 'calm', 'cozy', 'crisp', 'dapper', 'fuzzy', 'gentle', 'golden', 'happy', 'jolly', 'kind', 'lucky', 'minty', 'navy', 'peach', 'plucky', 'quick', 'quiet', 'rosy', 'silver', 'snug', 'soft', 'sunny', 'swift', 'tiny', 'violet', 'warm', 'wild', 'zesty'],
+  ['badger', 'beaver', 'bison', 'bunny', 'comet', 'corgi', 'crow', 'duck', 'falcon', 'fox', 'frog', 'gecko', 'goose', 'heron', 'koala', 'llama', 'mole', 'moose', 'otter', 'owl', 'panda', 'puffin', 'raven', 'robin', 'seal', 'sloth', 'sparrow', 'tiger', 'turtle', 'walrus', 'whale', 'wolf'],
+  ['acorn', 'apple', 'biscuit', 'cake', 'cloud', 'drum', 'feather', 'kite', 'lantern', 'leaf', 'maple', 'moon', 'pea', 'pebble', 'pencil', 'rocket', 'shell', 'snow', 'spoon', 'star', 'stone', 'toast', 'tree', 'tunnel', 'waffle', 'wave', 'whistle', 'willow', 'window', 'yarn', 'zipper', 'candle', 'canoe'],
+  ['bay', 'bridge', 'brook', 'cabin', 'cave', 'cove', 'dune', 'field', 'forest', 'garden', 'grove', 'harbour', 'hill', 'island', 'lake', 'lane', 'marsh', 'meadow', 'orchard', 'park', 'path', 'pond', 'ridge', 'river', 'shore', 'summit', 'trail', 'valley', 'village', 'woods', 'yard', 'beach']
+] as const;
 
 export const featureLifecycleSchema = z.enum(['development', 'beta', 'production', 'disabled']);
 export type FeatureLifecycle = z.infer<typeof featureLifecycleSchema>;
@@ -202,6 +210,8 @@ export type PrivateState = {
   prediction: string | null;
   reactionsUsed: string[];
   crowdWords: string[];
+  forbiddenClueWords: string[];
+  hostSettings: GameSettings | null;
 };
 
 export type RoundResult = {
@@ -279,12 +289,30 @@ export function normalizeRoomCode(code: string): string {
   return code.toLocaleLowerCase('en-CA').replace(/[\s-]+/g, '').replace(/[^a-z]/g, '');
 }
 
+export function formatRoomCode(code: string): string {
+  let rest = normalizeRoomCode(code);
+  const parts: string[] = [];
+  for (const list of ROOM_CODE_PARTS) {
+    const found = [...list].sort((a, b) => b.length - a.length).find((word) => rest.startsWith(word));
+    if (!found) break;
+    parts.push(found);
+    rest = rest.slice(found.length);
+  }
+  if (rest) parts.push(rest);
+  return (parts.length ? parts : [normalizeRoomCode(code)]).join(' ').toLocaleUpperCase('en-CA');
+}
+
 export function normalizeName(name: string): string {
-  return name.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-CA');
+  return safeDisplayName(name).toLocaleLowerCase('en-CA');
 }
 
 export function safeDisplayName(name: string): string {
-  return name.normalize('NFKC').replace(/\p{Cc}/gu, '').trim().replace(/\s+/g, ' ').slice(0, MAX_NAME_LENGTH);
+  return name
+    .normalize('NFKC')
+    .replace(/[\p{Cc}\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/gu, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, MAX_NAME_LENGTH);
 }
 
 export function normalizeGuess(value: string): string {

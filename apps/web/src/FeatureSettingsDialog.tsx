@@ -3,6 +3,8 @@ import { Check, Download, Lock, Search, Share2, Upload, X } from 'lucide-react';
 import { categories } from '@moley/word-packs';
 import { featureEnabled, modifiedSettingKeys, settingsForPreset, type GameSettings } from '@moley/shared';
 import { useGame } from './store';
+import { useDialogFocus } from './dialog';
+import { encodePackWords } from './pack-codec';
 
 const PRESETS: GameSettings['preset'][] = ['classic', 'online', 'party', 'quick', 'big-group', 'family', 'chaos', 'sweaty', 'custom'];
 const LABELS: Partial<Record<keyof GameSettings, string>> = {
@@ -14,10 +16,12 @@ const LABELS: Partial<Record<keyof GameSettings, string>> = {
 };
 
 export function FeatureSettingsDialog({ onClose }: { onClose: () => void }) {
-  const { room, send } = useGame();
-  const [draft, setDraft] = useState(room?.settings ?? settingsForPreset('classic'));
+  const [dialogRef, onDialogKeyDown] = useDialogFocus<HTMLElement>(onClose);
+  const { room, me, send } = useGame();
+  const editableSettings = me?.hostSettings ?? room?.settings ?? settingsForPreset('classic');
+  const [draft, setDraft] = useState(editableSettings);
   const [query, setQuery] = useState('');
-  const [customText, setCustomText] = useState((room?.settings.customWords ?? []).join('\n'));
+  const [customText, setCustomText] = useState(editableSettings.customWords.join('\n'));
   const importRef = useRef<HTMLInputElement>(null);
   const summary = useMemo(() => [draft.clueMode, draft.moleCount ? `${draft.moleCount} Moles` : 'Auto Moles', draft.targetScore ? `First to ${draft.targetScore}` : 'Endless', draft.defenceSeconds ? `${draft.defenceSeconds}s defence` : null, draft.chaosMode ? 'Chaos on' : null].filter(Boolean).join(' · '), [draft]);
   if (!room) return null;
@@ -43,13 +47,13 @@ export function FeatureSettingsDialog({ onClose }: { onClose: () => void }) {
     try { const payload = JSON.parse(await file.text()) as { format?: string; words?: unknown }; if (payload.format === 'moley-pack' && Array.isArray(payload.words)) setCustomText(payload.words.filter((word): word is string => typeof word === 'string').slice(0, 1000).join('\n')); } catch { /* Invalid packs leave the draft untouched. */ }
   };
   const sharePack = async () => {
-    const data = btoa(unescape(encodeURIComponent(JSON.stringify(customWords.slice(0, 100))))).replace(/=+$/, '');
+    const data = encodePackWords(customWords);
     const url = `${location.origin}/?pack=${encodeURIComponent(data)}`;
     if (navigator.share) await navigator.share({ title: 'Moley word pack', url }); else await navigator.clipboard.writeText(url);
   };
 
   return <div className="dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <section role="dialog" aria-modal="true" aria-labelledby="settings-title" className="game-dialog dialog-wide feature-settings">
+    <section ref={dialogRef} onKeyDown={onDialogKeyDown} role="dialog" aria-modal="true" aria-labelledby="settings-title" className="game-dialog dialog-wide feature-settings">
       <button className="dialog-close" onClick={onClose} aria-label="Close settings"><X /></button>
       <div className="settings-head"><div><span className="section-kicker">HOST CONTROLS</span><h2 id="settings-title">Game setup</h2><p className="config-summary">{summary}</p></div><button className={`lock-toggle ${draft.locked ? 'active' : ''}`} onClick={() => update('locked', !draft.locked)}><Lock /> {draft.locked ? 'Locked' : 'Room open'}</button></div>
       <label className="settings-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search settings…" /></label>

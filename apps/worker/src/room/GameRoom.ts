@@ -4,16 +4,17 @@ import {
   randomPersonality, rankVotes, resolveTie, scoreRound, shuffled, updateMoleCandidates, validateBotClue
 } from '@moley/game-core';
 import {
-  APP_VERSION, MAX_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, clientEventSchema, defaultSettings, featureEnabled, normalizeGuess, normalizeName, PROTOCOL_VERSION, settingsSchema,
+  APP_VERSION, MAX_PROTOCOL_VERSION, MAX_WEBSOCKET_MESSAGE_LENGTH, MIN_PROTOCOL_VERSION, clientEventSchema, defaultSettings, featureEnabled, normalizeGuess, normalizeName, PROTOCOL_VERSION, settingsSchema,
   type ClientEvent, type PrivateState, type PublicRoomState, type ServerEnvelope
 } from '@moley/shared';
 import { pickWord, words } from '@moley/word-packs';
 import { BotAI } from '../ai';
-import { json, newId, newSecret, SlidingRateLimit, validateName } from '../security';
+import { isAllowedOrigin, json, newId, newSecret, SlidingRateLimit, validateName } from '../security';
 import type { Env, RoomState, StoredPlayer } from '../types';
 import { runtimeFeatures } from '../features';
+import { publicSettings } from '../projections';
 
-type SocketAttachment = { playerId: string; connectedAt: number };
+type SocketAttachment = { playerId: string; connectedAt: number; lastSeq: number };
 
 const emptyState = (): RoomState => ({
   initialized: false,
@@ -74,8 +75,8 @@ export class GameRoom extends DurableObject<Env> {
     const url = new URL(request.url);
     if (url.pathname === '/status') return json({ initialized: this.room.initialized, code: this.room.code, stage: this.room.stage, seats: this.activeSeats().length });
     if (url.pathname === '/create' && request.method === 'POST') return this.create(await request.json().catch(() => null));
-    if (url.pathname === '/join' && request.method === 'POST') return this.join(await request.json().catch(() => null));
-    if (url.pathname === '/connect') return this.connectWebSocket(request, url.searchParams.get('token') ?? '', url.searchParams.get('clientVersion') ?? '', Number(url.searchParams.get('protocol')));
+    if (url.pathname === '/join' && request.method === 'POST') return this.join(await request.json().catch(() => null), request.headers.get('X-Moley-Network-Key') ?? 'unknown');
+    if (url.pathname === '/connect') return this.connectWebSocket(request, url.searchParams.get('clientVersion') ?? '', Number(url.searchParams.get('protocol')));
     return json({ error: 'Tunnel not found.' }, 404);
   }
 
@@ -100,14 +101,17 @@ export class GameRoom extends DurableObject<Env> {
     return json({ code: this.room.code, playerId: host.id, sessionToken: host.reconnectToken, snapshot: this.snapshot(host) }, 201);
   }
 
-  private async join(body: unknown): Promise<Response> {
+  private async join(body: unknown, networkKey: string): Promise<Response> {
     if (!this.room.initialized) return json({ error: 'We could not find that room. Check the code and try again.' }, 404);
+    if (this.env.LOAD_TEST !== 'true' && !this.rate.allow(`join:${networkKey}`, 120, 60_000)) return json({ error: 'This room is receiving too many join attempts. Please wait a moment.' }, 429);
     const parsed = (body && typeof body === 'object') ? body as Record<string, unknown> : {};
     const requestedSpectator = parsed.spectator === true;
     const queuedForNextRound = !requestedSpectator && this.room.stage !== 'ROOM_LOBBY' && this.room.settings.lateJoin !== 'block';
     const asSpectator = requestedSpectator || queuedForNextRound;
-    if (this.room.settings.locked && !asSpectator) return json({ error: 'This room is locked right now.' }, 423);
+    if (this.room.settings.locked) return json({ error: 'This room is locked right now.' }, 423);
     if (this.room.stage !== 'ROOM_LOBBY' && this.room.settings.lateJoin === 'block' && !asSpectator) return json({ error: 'This match has already started.' }, 409);
+    if (!asSpectator && this.activeSeats().length >= 100) return json({ error: 'This room already has the maximum 100 players.' }, 409);
+    if (asSpectator && this.room.players.filter((player) => player.kind === 'spectator').length >= 200) return json({ error: 'The audience is full right now.' }, 409);
     const nameResult = validateName(parsed.name, this.room.players);
     if (!nameResult.ok) return json({ error: nameResult.error }, 400);
     const now = Date.now();
@@ -124,18 +128,26 @@ export class GameRoom extends DurableObject<Env> {
     return json({ code: this.room.code, playerId: player.id, sessionToken: player.reconnectToken, spectator: asSpectator, snapshot: this.snapshot(player) }, 201);
   }
 
-  private connectWebSocket(request: Request, token: string, clientVersion: string, protocol: number): Response {
+  private connectWebSocket(request: Request, clientVersion: string, protocol: number): Response {
     if (request.headers.get('Upgrade')?.toLocaleLowerCase() !== 'websocket') return json({ error: 'A live connection is required.' }, 426);
     if (!Number.isInteger(protocol) || protocol < MIN_PROTOCOL_VERSION || protocol > MAX_PROTOCOL_VERSION) {
       return json({ error: 'This Moley tab needs a refresh before it can rejoin.', code: 'CLIENT_UPDATE_REQUIRED', compatibility: { appVersion: APP_VERSION, minProtocol: MIN_PROTOCOL_VERSION, maxProtocol: MAX_PROTOCOL_VERSION, refreshRequired: true } }, 426);
     }
     if (!clientVersion) return json({ error: 'Client version is required.', code: 'CLIENT_UPDATE_REQUIRED' }, 426);
+    const origin = request.headers.get('Origin');
+    if (this.env.LOAD_TEST !== 'true' && !isAllowedOrigin(origin)) return json({ error: 'That connection origin is not allowed.' }, 403);
+    const protocols = (request.headers.get('Sec-WebSocket-Protocol') ?? '').split(',').map((value) => value.trim());
+    if (!protocols.includes(`moley.v${PROTOCOL_VERSION}`)) return json({ error: 'The live connection protocol is missing.' }, 426);
+    const token = protocols.find((value) => value.startsWith('session.'))?.slice('session.'.length) ?? '';
     const player = this.room.players.find((candidate) => candidate.reconnectToken === token);
     if (!player || token.length < 20) return json({ error: 'This reconnect link is no longer valid.' }, 401);
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-    server.serializeAttachment({ playerId: player.id, connectedAt: Date.now() } satisfies SocketAttachment);
+    server.serializeAttachment({ playerId: player.id, connectedAt: Date.now(), lastSeq: -1 } satisfies SocketAttachment);
     this.ctx.acceptWebSocket(server, [player.id]);
+    for (const existing of this.ctx.getWebSockets(player.id)) {
+      if (existing !== server && existing.readyState === WebSocket.OPEN) existing.close(4001, 'Session moved to another tab');
+    }
     player.connected = true;
     player.afk = false;
     player.autopilot = false;
@@ -144,7 +156,7 @@ export class GameRoom extends DurableObject<Env> {
     this.ctx.waitUntil(this.persist());
     this.send(server, player);
     this.broadcast(`${player.name} is connected.`);
-    return new Response(null, { status: 101, webSocket: client });
+    return new Response(null, { status: 101, webSocket: client, headers: { 'Sec-WebSocket-Protocol': `moley.v${PROTOCOL_VERSION}` } });
   }
 
   private normalizeStoredState(raw: Partial<RoomState>): RoomState {
@@ -171,16 +183,23 @@ export class GameRoom extends DurableObject<Env> {
     this.room.featureFlags = runtimeFeatures(this.env);
     const attachment = socket.deserializeAttachment() as SocketAttachment | null;
     const player = attachment ? this.player(attachment.playerId) : null;
-    if (!player) { socket.close(1008, 'Invalid session'); return; }
+    if (!attachment || !player) { socket.close(1008, 'Invalid session'); return; }
     this.ensureHostPresence();
     player.lastSeen = Date.now();
-    if (typeof message !== 'string' || message.length > 4096) { this.error(socket, 'That message was too large.'); return; }
-    if (!this.rate.allow(player.id, 35, 10_000)) { this.error(socket, 'Slow down for a moment.'); return; }
+    if (typeof message !== 'string' || message.length > MAX_WEBSOCKET_MESSAGE_LENGTH) { this.error(socket, 'That message was too large.'); return; }
+    if (!this.rate.allow(`event:${player.id}`, 60, 10_000)) { this.error(socket, 'Slow down for a moment.'); return; }
     let raw: unknown;
     try { raw = JSON.parse(message); } catch { this.error(socket, 'Moley could not understand that message.'); return; }
     const parsed = clientEventSchema.safeParse(raw);
     if (!parsed.success) { this.error(socket, 'That action is not valid right now.'); return; }
     const event = parsed.data;
+    if (event.seq <= attachment.lastSeq) { this.error(socket, 'That action is stale or duplicated.'); return; }
+    socket.serializeAttachment({ ...attachment, lastSeq: event.seq } satisfies SocketAttachment);
+    if (event.type === 'heartbeat') {
+      const envelope: ServerEnvelope = { v: PROTOCOL_VERSION, id: newId('event'), seq: ++this.room.serverSequence, ts: Date.now(), type: 'pong' };
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(envelope));
+      return;
+    }
     if (this.room.processedEvents.includes(event.id)) { this.send(socket, player); return; }
     this.room.processedEvents = [...this.room.processedEvents.slice(-499), event.id];
     try {
@@ -229,8 +248,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async handleEvent(player: StoredPlayer, event: ClientEvent): Promise<void> {
-    if (event.type === 'heartbeat') return;
     if (event.type === 'send_chat') {
+      if (!this.rate.allow(`chat:${player.id}`, 8, 10_000)) throw new Error('Chat is moving too quickly. Try again in a moment.');
       if (!featureEnabled(this.room.featureFlags, 'chat') || !this.room.settings.discussionChat || !['DISCUSSION', 'ROOM_LOBBY'].includes(this.room.stage)) throw new Error('Chat is closed during this part of the game.');
       this.room.chat = [...this.room.chat.slice(-99), { id: event.id, playerId: player.id, playerName: player.name, text: event.text, createdAt: Date.now(), bot: player.kind === 'bot' }];
       return;
@@ -256,6 +275,7 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     if (event.type === 'submit_drawing') {
+      if (!this.rate.allow(`drawing:${player.id}`, 4, 10_000)) throw new Error('Please wait before submitting another drawing.');
       if (!featureEnabled(this.room.featureFlags, 'drawing') || this.room.stage !== 'CLUE_TURN' || this.room.settings.clueMode !== 'drawing') throw new Error('Drawing clues are unavailable right now.');
       if (!this.room.turnOrder.includes(player.id)) throw new Error('Spectators cannot submit drawings.');
       player.clueDrawing = event.drawing;
@@ -283,6 +303,7 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     if (event.type === 'submit_crowd_word') {
+      if (!this.rate.allow(`crowd:${player.id}`, 4, 10_000)) throw new Error('Please wait before changing your crowd word again.');
       if (!featureEnabled(this.room.featureFlags, 'customPacks') || !this.room.settings.crowdPack || this.room.stage !== 'ROOM_LOBBY' || player.kind === 'spectator') throw new Error('Crowd pack submissions are closed.');
       const normalized = normalizeGuess(event.word).replace(/s$/, '');
       if (this.room.settings.wordBlacklist.some((word) => normalizeGuess(word).replace(/s$/, '') === normalized)) throw new Error('That word is blocked in this room.');
@@ -339,6 +360,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private async startRound(restart = false): Promise<void> {
     if (!restart && !['ROOM_LOBBY', 'SCOREBOARD'].includes(this.room.stage)) throw new Error('The current round needs to finish first.');
+    if (restart && ['ROOM_LOBBY', 'SCOREBOARD', 'MATCH_COMPLETE'].includes(this.room.stage)) throw new Error('There is no active round to restart.');
     for (const player of this.room.players) if (player.queuedForNextRound) { player.kind = 'human'; player.role = null; player.queuedForNextRound = false; }
     const seats = this.activeSeats();
     if (seats.length < 4) throw new Error('Add Bots to Start — Moley works best with at least four seats.');
@@ -524,7 +546,7 @@ export class GameRoom extends DurableObject<Env> {
     this.room.stage = 'ROUND_REVEAL';
     this.room.history = [...this.room.history.slice(-23), {
       roundNumber: this.room.roundNumber, word: this.room.word.display, category: this.room.word.category,
-      result, clues: seats.map((player) => ({ playerId: player.id, clue: player.clue ?? undefined, drawing: player.clueDrawing ?? undefined, anonymous: this.room.settings.anonymousClues })),
+      result, clues: seats.map((player) => ({ playerId: player.id, clue: player.clue ?? undefined, anonymous: this.room.settings.anonymousClues })),
       voteTotals: this.room.votesRevealed ?? {}, createdAt: Date.now()
     }];
     this.clearTimer();
@@ -597,6 +619,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private removePlayer(playerId: string, botsOnly: boolean): void {
+    if (!['ROOM_LOBBY', 'SCOREBOARD', 'MATCH_COMPLETE'].includes(this.room.stage)) throw new Error('Seats can only be removed between rounds.');
     const target = this.player(playerId);
     if (!target || target.host) throw new Error('That player cannot be removed.');
     if (botsOnly && target.kind !== 'bot') throw new Error('That seat is not a bot.');
@@ -608,7 +631,7 @@ export class GameRoom extends DurableObject<Env> {
 
   private transferHost(playerId: string): void {
     const target = this.player(playerId);
-    if (!target || target.kind !== 'human') throw new Error('Choose a human player as host.');
+    if (!target || target.kind !== 'human' || !target.connected) throw new Error('Choose a connected human player as host.');
     for (const player of this.room.players) player.host = player.id === target.id;
     this.room.message = `${target.name} is now the host`;
   }
@@ -719,7 +742,7 @@ export class GameRoom extends DurableObject<Env> {
         ,symbol: ['●', '▲', '■', '◆', '★', '✚', '⬟', '☀'][this.room.players.indexOf(player) % 8]
         ,afk: player.afk, autopilot: player.autopilot, personality: player.kind === 'bot' ? player.personality : undefined
       })),
-      settings: this.room.settings,
+      settings: publicSettings(this.room.settings),
       turnOrder: this.room.turnOrder,
       currentTurn: this.room.currentTurn,
       readyCount: this.readySeats().length,
@@ -768,7 +791,9 @@ export class GameRoom extends DurableObject<Env> {
       ,voteConfidence: player.voteConfidence
       ,prediction: player.prediction
       ,reactionsUsed: player.reactionsUsed
-      ,crowdWords: player.host ? this.room.crowdWords.map((entry) => entry.word) : []
+      ,crowdWords: this.room.crowdWords.filter((entry) => entry.playerId === player.id).map((entry) => entry.word)
+      ,forbiddenClueWords: secretVisible && player.role === 'innocent' ? this.room.settings.forbiddenClueWords : []
+      ,hostSettings: player.host && ['ROOM_LOBBY', 'SCOREBOARD'].includes(this.room.stage) ? this.room.settings : null
     };
   }
 

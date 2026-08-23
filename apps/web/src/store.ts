@@ -69,21 +69,27 @@ function openSocket(session: Session, set: (value: Partial<GameStore>) => void, 
   if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) { socket.onclose = null; socket.close(); }
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const query = new URLSearchParams({ token: session.token, clientVersion: APP_VERSION, protocol: String(PROTOCOL_VERSION) });
-  const connection = new WebSocket(`${scheme}//${location.host}/api/rooms/${session.code}/connect?${query}`);
+  const connection = new WebSocket(`${scheme}//${location.host}/api/rooms/${session.code}/connect?${query}`, [`moley.v${PROTOCOL_VERSION}`, `session.${session.token}`]);
   socket = connection;
   connection.onopen = () => {
     if (socket !== connection) return;
-    reconnectAttempt = 0; set({ connection: 'connected', error: null });
+    reconnectAttempt = 0; lastServerSeq = -1; set({ connection: 'connected', error: null });
     if (heartbeat) window.clearInterval(heartbeat);
     heartbeat = window.setInterval(() => get().send({ type: 'heartbeat' }), 15_000);
   };
   connection.onmessage = (raw) => {
     if (socket !== connection) return;
-    const event = JSON.parse(String(raw.data)) as ServerEnvelope;
+    let event: ServerEnvelope;
+    try { event = JSON.parse(String(raw.data)) as ServerEnvelope; } catch { set({ error: 'Moley received a damaged live update and is reconnecting.' }); connection.close(); return; }
+    if (event.v !== PROTOCOL_VERSION || !Number.isInteger(event.seq)) { set({ updateRequired: true, error: 'Refresh Moley to continue with this room.' }); connection.close(); return; }
     if (event.seq <= lastServerSeq) return;
     lastServerSeq = event.seq;
     if (event.type === 'room_snapshot' && event.public && event.private) {
       set({ room: event.public, me: event.private, notification: event.public.message ?? null, latencyMs: lastHeartbeatAt ? Math.round(performance.now() - lastHeartbeatAt) : get().latencyMs });
+      lastHeartbeatAt = 0;
+    }
+    if (event.type === 'pong') {
+      set({ latencyMs: lastHeartbeatAt ? Math.round(performance.now() - lastHeartbeatAt) : get().latencyMs });
       lastHeartbeatAt = 0;
     }
     if (event.type === 'error') set({ error: event.message ?? 'Moley lost the tunnel for a second.' });
@@ -114,5 +120,10 @@ document.addEventListener('visibilitychange', () => {
 void useGame.getState().loadRuntime();
 
 export function restoreSession(code: string): Session | null {
-  try { return JSON.parse(localStorage.getItem(keyFor(code)) ?? 'null') as Session | null; } catch { return null; }
+  try {
+    const value = JSON.parse(localStorage.getItem(keyFor(code)) ?? 'null') as Partial<Session> | null;
+    return value && typeof value.code === 'string' && typeof value.playerId === 'string' && typeof value.token === 'string' && value.token.length >= 20
+      ? { code: value.code, playerId: value.playerId, token: value.token }
+      : null;
+  } catch { return null; }
 }

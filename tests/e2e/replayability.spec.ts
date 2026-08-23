@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { APP_VERSION, MAX_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION } from '@moley/shared';
 
 test('new presets and searchable progressive settings are discoverable', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('moley:tutorial', 'done'));
@@ -21,7 +22,7 @@ test('runtime config advertises compatibility and public lifecycle state', async
   const response = await request.get('/api/config');
   expect(response.ok()).toBeTruthy();
   const config = await response.json();
-  expect(config).toMatchObject({ appVersion: '2.4.0', protocol: 2, protocolRange: { min: 2, max: 2 } });
+  expect(config).toMatchObject({ appVersion: APP_VERSION, protocol: PROTOCOL_VERSION, protocolRange: { min: MIN_PROTOCOL_VERSION, max: MAX_PROTOCOL_VERSION } });
   expect(config.features).not.toHaveProperty('secrets');
   expect(config.features.drawing).toMatch(/beta|production|disabled/);
 });

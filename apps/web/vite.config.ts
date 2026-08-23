@@ -31,5 +31,18 @@ export default defineConfig({
     strictPort: true,
     proxy: { '/api': { target: 'http://127.0.0.1:8787', ws: true } }
   },
-  build: { target: 'es2022', sourcemap: false }
+  build: {
+    target: 'es2022',
+    sourcemap: false,
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('/node_modules/react') || id.includes('/node_modules/zustand') || id.includes('/node_modules/zod')) return 'react-core';
+          if (id.includes('/node_modules/motion')) return 'motion';
+          if (id.includes('/node_modules/lucide-react')) return 'icons';
+          if (id.includes('/node_modules/qrcode')) return 'qr';
+        }
+      }
+    }
+  }
 });

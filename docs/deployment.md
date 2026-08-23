@@ -10,9 +10,9 @@
 6. Merge to `main`. The workflow repeats verification and runs the unified deploy.
 7. Confirm `/api/health`, room creation, two-player reconnect, and a bot-assisted match on the `workers.dev` preview before attaching the domain.
 
-The `v1` migration creates the SQLite-backed `GameRoom` Durable Object class. Add future migration tags; never rename or delete the existing tag. Deploy schema changes before code that depends on them when backward compatibility requires it.
+The `v1` migration creates the SQLite-backed `GameRoom` Durable Object class. The `v2` migration creates the durable per-network `AbuseGate`. Add future migration tags; never rename or delete existing tags. Deploy schema changes before code that depends on them when backward compatibility requires it.
 
-Version 2.4 keeps the existing SQLite table and normalizes stored JSON snapshots at load. Before deploy, verify `/api/config` reports app `2.4.0`, protocol `2`, and range `2..2`; then refresh an old tab and confirm it can rejoin with its saved token. Feature lifecycle changes use `FEATURE_FLAGS_JSON`; emergency kill variables are documented in `docs/feature-flags.md`.
+Version 2.5 keeps the existing room table and normalizes stored JSON snapshots at load. Before deploy, verify `/api/config` reports app `2.5.0`, protocol `3`, and range `3..3`. Protocol 2 tabs must refresh; their locally stored reconnect token remains valid and the refreshed client sends it through the WebSocket subprotocol. Feature lifecycle changes use `FEATURE_FLAGS_JSON`; emergency kill variables are documented in `docs/feature-flags.md`.
 
 ## Move moley.ca safely from GoDaddy
 

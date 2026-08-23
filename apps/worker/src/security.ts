@@ -13,6 +13,10 @@ export function apiCorsOrigin(origin: string): string | undefined {
   return API_ORIGINS.has(origin) ? origin : undefined;
 }
 
+export function isAllowedOrigin(origin: string | null): boolean {
+  return typeof origin === 'string' && API_ORIGINS.has(origin);
+}
+
 export function newSecret(bytes = 24): string {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
   return btoa(String.fromCharCode(...data)).replace(/[+/=]/g, (char) => ({ '+': '-', '/': '_', '=': '' })[char]!);
@@ -26,7 +30,7 @@ export function validateName(raw: unknown, players: StoredPlayer[]): { ok: true;
   if (typeof raw !== 'string') return { ok: false, error: 'Enter a display name to join the room.' };
   const name = safeDisplayName(raw);
   if (!name) return { ok: false, error: 'Enter a display name to join the room.' };
-  if (players.some((player) => player.kind !== 'spectator' && normalizeName(player.name) === normalizeName(name))) {
+  if (players.some((player) => normalizeName(player.name) === normalizeName(name))) {
     return { ok: false, error: 'Someone in this room is already using that name.' };
   }
   return { ok: true, name };

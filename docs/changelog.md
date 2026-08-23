@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.0 — 2026-08-23
+
+- Fixed a critical projection flaw that exposed custom-word and category pools to Moles and spectators.
+- Moved reconnect credentials out of WebSocket URLs and into the negotiated subprotocol; added first-party Origin checks and single-active-tab sessions.
+- Expanded cryptographically generated room codes from 1,728 possibilities to more than one million and removed enumerable room-status responses.
+- Added durable create/join throttling, room-level join limits, action-specific rate limits, 100-player and 200-spectator caps, and early body-size rejection.
+- Added stale-sequence enforcement, bounded drawing payloads, lightweight heartbeat responses, and stricter host/state permissions.
+- Hardened CSP and response headers, Unicode display-name handling, custom-pack link encoding, local career-stat idempotency, and modal keyboard/focus behavior.
+- Added automated projection, protocol abuse, accessibility, offline PWA, responsive, Firefox, WebKit, iOS WebKit, and controlled local load coverage.
+- Updated CI to install all supported Playwright engines and block deployment on the E2E suite.
+
 ## 2.4.0 — 2026-08-23
 
 - Added server-enforced feature lifecycles and remote kill switches.
