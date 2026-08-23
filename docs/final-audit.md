@@ -4,6 +4,8 @@ Audit date: 2026-08-23
 Release candidate: Moley 2.5.0 / protocol 3  
 Scope: repository, local Worker/PWA, controlled local adversarial and load tests, Cloudflare account and domain read-only review
 
+Production evidence: GitHub Actions run `32652844816`, commit `4ccf354`, Cloudflare version `9134ff27-0bde-49b9-9b17-cab3a3695e70`.
+
 Status legend: `PASS` was executed successfully; `FIXED` was reproduced, changed, and regression-tested; `NOT RUN` was not honestly testable in this environment; `OPEN` needs a product or owner decision.
 
 ## Findings
@@ -30,4 +32,4 @@ Status legend: `PASS` was executed successfully; `FIXED` was reproduced, changed
 
 ## Acceptance position
 
-No known Critical or High code finding remains open in the release candidate. Automated checks, cross-browser multi-client play, security regressions, offline PWA checks, responsive screenshots, and controlled local load scenarios pass. Launch approval remains conditional on the physical/manual sessions and email-DNS decision listed above, plus post-deployment live smoke tests.
+No known Critical or High code finding remains open in the deployed release. Automated checks, cross-browser multi-client play, security regressions, offline PWA checks, responsive screenshots, controlled local load scenarios, and production smoke tests pass. Full pre-launch sign-off remains conditional on the physical/manual sessions and email-DNS decision listed above.

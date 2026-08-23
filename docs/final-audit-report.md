@@ -4,11 +4,13 @@
 
 Moley 2.5.0 is materially safer and more resilient than the initial candidate. One Critical secret-projection issue and five High-risk session, enumeration, rate-limit, Origin, and heartbeat-amplification issues were reproduced and fixed. The local quality gate, 34 unit/integration checks, desktop acceptance suite, four additional browser/device projects, accessibility scans, offline PWA check, and controlled loads through 1,000 sockets pass.
 
-This report does not fake unavailable evidence. Physical-device sessions, real assistive technology, coordinated human games, and destructive production load were not run. The code candidate has no known open Critical or High finding, but final launch approval is conditional on those manual gates, the email-DNS decision, and post-deployment production smoke tests.
+This report does not fake unavailable evidence. Physical-device sessions, real assistive technology, coordinated human games, and destructive production load were not run. The deployed release has no known open Critical or High finding, but full pre-launch sign-off is conditional on those manual gates and the email-DNS decision.
 
 ## Testing Performed
 
 Source/data-flow review, trust-boundary review, schema fuzz cases, multi-context browser play, live WebSocket adversarial events, hostile HTTP requests, PWA cache/offline behavior, automated accessibility, responsive screenshots, build/lint/type/unit checks, dependency/secret patterns, controlled load, and read-only Cloudflare dashboard/DNS/TLS review.
+
+The deployed code is commit `4ccf354`. GitHub Actions run `32652844816` passed every gate and deployed Cloudflare version `9134ff27-0bde-49b9-9b17-cab3a3695e70`. Live checks confirmed app 2.5.0/protocol 3, hardened headers, canonical `www`, create/join/reconnect/host transfer, hostile HTTP handling, invalid-token rejection, and role-separated secret projection.
 
 ## Devices Tested
 
@@ -68,6 +70,6 @@ Complete UI matches for all presets, clue modes, multiple Moles, drawing, chaos,
 
 ## Final Readiness Assessment
 
-**Code/security candidate: READY WITH MANUAL GATES. Production release: PENDING.**
+**Production release: LIVE. Code/security: READY WITH MANUAL GATES.**
 
-No known Critical or High code issue remains. Do not describe the full pre-launch audit as complete until the pending production smoke tests pass and the owner either performs or explicitly accepts the listed physical/manual scenarios and resolves the mail-DNS choice.
+No known Critical or High code issue remains and the production smoke tests pass. Do not describe the entire pre-launch program as complete until the owner performs or explicitly accepts the listed physical/manual scenarios and resolves the mail-DNS choice.

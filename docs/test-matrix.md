@@ -75,7 +75,10 @@ Local load results validate the code path and harness, not Cloudflare account ca
 | --- | --- |
 | Cloudflare account authenticated and zone Active | PASS |
 | DNS Worker routes, TLS, HTTPS settings inspected | PASS |
-| GitHub CI for final commit | PENDING DEPLOYMENT |
-| Live 2.5.0 `/api/config` and `/api/health` | PENDING DEPLOYMENT |
-| Live headers, apex, `www` redirect, create/join/reconnect | PENDING DEPLOYMENT |
+| GitHub CI for deployed code | PASS — run 32652844816 |
+| Live 2.5.0 `/api/config` and `/api/health` | PASS — protocol 3 / range 3..3 |
+| Live headers, apex, `www` redirect | PASS — 200, hardened headers, one 301 preserving path/query |
+| Live create/join/private roles/reconnect/host transfer | PASS — desktop production smoke |
+| Live hostile HTTP and invalid reconnect token | PASS — expected 403/415/400/413/405/rejection |
+| Live same-origin secret projection | PASS — only innocents received `LIVESECRET`; Mole/spectator/public did not |
 | Mail DNS decision | OPEN |

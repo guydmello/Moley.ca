@@ -1,11 +1,12 @@
 # Final security summary
 
 Date: 2026-08-23  
-Candidate: 2.5.0 / protocol 3
+Deployed release: 2.5.0 / protocol 3<br>
+Cloudflare version: `9134ff27-0bde-49b9-9b17-cab3a3695e70`
 
 ## Result
 
-The release candidate has no known open Critical or High application-security finding. The critical secret-word projection bug and the high-risk reconnect-token, room-enumeration, Origin, durable-rate-limit, and heartbeat-amplification issues were fixed and regression-tested.
+The deployed release has no known open Critical or High application-security finding. The critical secret-word projection bug and the high-risk reconnect-token, room-enumeration, Origin, durable-rate-limit, and heartbeat-amplification issues were fixed and regression-tested locally and through targeted production smoke checks.
 
 This was an authorized source review plus controlled local dynamic test. It was not an independent third-party penetration test and did not run destructive load against Cloudflare production.
 
