@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { clientEventSchema, normalizeGuess, normalizeName, normalizeRoomCode, safeDisplayName } from '@moley/shared';
+import { PROTOCOL_VERSION, clientEventSchema, normalizeGuess, normalizeName, normalizeRoomCode, safeDisplayName } from '@moley/shared';
 
-const base = { v: 1, id: 'event_12345678', seq: 1 } as const;
+const base = { v: PROTOCOL_VERSION, id: 'event_12345678', seq: 1 } as const;
 
 describe('protocol validation', () => {
   it('accepts a valid vote and rejects oversized or malformed actions', () => {

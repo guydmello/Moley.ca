@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { normalizeRoomCode } from '@moley/shared';
+import { APP_VERSION, MAX_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, normalizeRoomCode } from '@moley/shared';
 import { GameRoom } from './room/GameRoom';
 import { apiCorsOrigin, json, SlidingRateLimit } from './security';
 import type { Env } from './types';
 import { canonicalHostRedirect } from './canonical';
+import { runtimeConfig } from './features';
 
 export { GameRoom };
 
@@ -85,10 +86,16 @@ app.get('/api/rooms/:code/connect', async (c) => {
   const stub = await roomStub(c.env, c.req.param('code'));
   if (!stub) return json({ error: 'Room not found.' }, 404);
   const url = new URL(c.req.url);
-  return stub.fetch(`https://room/connect?token=${encodeURIComponent(url.searchParams.get('token') ?? '')}`, { headers: c.req.raw.headers });
+  const query = new URLSearchParams({
+    token: url.searchParams.get('token') ?? '',
+    clientVersion: url.searchParams.get('clientVersion') ?? '',
+    protocol: url.searchParams.get('protocol') ?? ''
+  });
+  return stub.fetch(`https://room/connect?${query}`, { headers: c.req.raw.headers });
 });
 
-app.get('/api/health', (c) => c.json({ ok: true, service: 'moley', protocol: 1 }));
+app.get('/api/config', (c) => c.json(runtimeConfig(c.env), 200, { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' }));
+app.get('/api/health', (c) => c.json({ ok: true, service: 'moley', appVersion: APP_VERSION, protocol: PROTOCOL_VERSION, protocolRange: { min: MIN_PROTOCOL_VERSION, max: MAX_PROTOCOL_VERSION } }));
 
 app.all('*', async (c) => {
   const response = await c.env.ASSETS.fetch(c.req.raw);

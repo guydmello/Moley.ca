@@ -10,6 +10,9 @@ This repository is a ground-up TypeScript rebuild designed for Cloudflare's free
 - Deterministic smart bots plus optional Workers AI enhancement
 - Spoken and typed clues, multiple Moles, TV display, and pass-the-phone play
 - More than 800 built-in words across more than 60 categories
+- Optional emoji/drawing/anonymous clues, defence and richer round recaps
+- Searchable presets and server-enforced feature kill switches
+- Audience predictions, device-only career stats and privacy-safe diagnostics
 
 ## Local development
 
@@ -37,7 +40,7 @@ npm run test:load
 
 `npm run deploy` builds the client and deploys the Worker, static assets, SQLite Durable Object migration, and Workers AI binding together. GitHub Actions verifies type safety, lint, unit tests, and production builds before deploying `main`.
 
-See [deployment](docs/deployment.md), [architecture](docs/architecture.md), [security](docs/security.md), [bots](docs/bot-design.md), and [game rules](docs/game-rules.md).
+See [deployment](docs/deployment.md), [architecture](docs/architecture.md), [feature flags](docs/feature-flags.md), [changelog](docs/changelog.md), [security](docs/security.md), [bots](docs/bot-design.md), and [game rules](docs/game-rules.md).
 
 ## Privacy
 

@@ -7,6 +7,9 @@ export type WordEntry = {
   tags: string[];
   safeBotClues: string[];
   familySafe: boolean;
+  contentLevel?: 'family' | 'teen';
+  pack?: string;
+  lastReviewed?: string;
 };
 
 const PACKS: Record<string, string> = {
@@ -29,7 +32,7 @@ const PACKS: Record<string, string> = {
   Continents: 'Africa|Antarctica|Asia|Europe|North America|South America|Australia',
   Geography: 'Mountain|River|Island|Desert|Valley|Volcano|Glacier|Waterfall|Canyon|Peninsula|Lake|Forest|Cave|Beach|Cliff',
   Landmarks: 'Eiffel Tower|Great Wall of China|Statue of Liberty|Colosseum|Taj Mahal|Machu Picchu|Pyramids of Giza|Big Ben|Sydney Opera House|Mount Rushmore|Christ the Redeemer|Stonehenge|Golden Gate Bridge|CN Tower|Niagara Falls',
-  Canada: 'Maple Syrup|Hockey|Toque|Loonie|Mountie|Canoe|Poutine|Beaver|Inukshuk|Snowshoe|Timbits|Nanaimo Bar|Lacrosse|Northern Lights|Cottage',
+  Canada: 'Maple Syrup|Hockey|Toque|Loonie|Mountie|Canoe|Poutine|Beaver|Inukshuk|Snowshoe|Timbits|Nanaimo Bar|Lacrosse|Northern Lights|Cottage|Two-Four|Caesar|Butter Tart|Ketchup Chips|Coffee Crisp|Donair|Cabane à Sucre|Zamboni|Eh|The Tragically Hip|Bagged Milk|Algonquin Park|CN Tower|Rideau Canal',
   'Modes of Transport': 'Bicycle|Car|Train|Airplane|Boat|Subway|Bus|Helicopter|Motorcycle|Scooter|Tram|Ferry|Skateboard|Taxi|Hot Air Balloon',
   Cars: 'Sedan|Convertible|Minivan|Pickup Truck|Sports Car|Limousine|Hatchback|Jeep|Electric Car|Station Wagon|Race Car|Monster Truck|Ambulance|School Bus',
   Travel: 'Passport|Suitcase|Boarding Pass|Hotel|Map|Itinerary|Tour Guide|Backpack|Hostel|Souvenir|Jet Lag|Airport|Cruise|Road Trip',
@@ -111,7 +114,10 @@ export const words: WordEntry[] = Object.entries(PACKS).flatMap(([category, valu
     difficulty: index % 7 === 0 ? 'hard' : index % 3 === 0 ? 'medium' : 'easy',
     tags: [slug(category), ...display.toLocaleLowerCase('en-CA').split(/\s+/).filter((part) => part.length > 3)],
     safeBotClues: CATEGORY_CLUES[category] ?? ['familiar', 'everyday', category.toLocaleLowerCase('en-CA')],
-    familySafe: true
+    familySafe: true,
+    contentLevel: 'family' as const,
+    pack: category === 'Internet Culture' ? 'internet-culture-2026' : category === 'Canada' ? 'canada-expanded' : 'core',
+    lastReviewed: category === 'Internet Culture' ? '2026-08-23' : undefined
   }))
 );
 

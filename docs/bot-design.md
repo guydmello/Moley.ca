@@ -21,3 +21,9 @@ Difficulty is probabilistic:
 Workers AI is optional and server-side. It is used only where language quality helps, currently clue refinement. A request has a short timeout, bounded output, strict JSON extraction, word/alias leak rejection, max-length validation, and a circuit breaker after repeated failures. Any timeout, quota failure, malformed response, or unsafe clue silently uses the deterministic result.
 
 Future AI tasks should keep the same boundary: build a role-specific prompt from only information that role is entitled to see, request one compact batch result, validate it, and never block stage progress on inference.
+
+## Replayability controls
+
+Hosts can quick-fill a room, rename bots and assign one of eight visible personality labels. Personalities adjust presentation and heuristic behaviour; they do not grant privileged information. AI has an independent server kill switch and deterministic behavior remains the fallback.
+
+When AFK autopilot is enabled, a disconnected human seat can temporarily use the same bounded bot clue/vote path. The seat remains owned by its private reconnect token and is reclaimed immediately when its human reconnects. Autopilot state is public so it cannot impersonate a present human.

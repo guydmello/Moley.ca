@@ -12,6 +12,8 @@
 
 The `v1` migration creates the SQLite-backed `GameRoom` Durable Object class. Add future migration tags; never rename or delete the existing tag. Deploy schema changes before code that depends on them when backward compatibility requires it.
 
+Version 2.4 keeps the existing SQLite table and normalizes stored JSON snapshots at load. Before deploy, verify `/api/config` reports app `2.4.0`, protocol `2`, and range `2..2`; then refresh an old tab and confirm it can rejoin with its saved token. Feature lifecycle changes use `FEATURE_FLAGS_JSON`; emergency kill variables are documented in `docs/feature-flags.md`.
+
 ## Move moley.ca safely from GoDaddy
 
 GoDaddy can remain the registrar. Do not cancel or transfer the registration merely to use Cloudflare hosting.

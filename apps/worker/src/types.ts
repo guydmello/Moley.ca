@@ -1,5 +1,5 @@
 import type { BotDifficulty, BotMind } from '@moley/game-core';
-import type { BotPersonality, ChatMessage, GameSettings, GameStage, PlayerKind, RoundResult } from '@moley/shared';
+import type { BotPersonality, ChatMessage, DrawingPayload, FeatureFlags, GameSettings, GameStage, PlayerKind, ReactionSummary, RoundHistory, RoundResult, VoteRevealItem } from '@moley/shared';
 import type { WordEntry } from '@moley/word-packs';
 
 export type StoredPlayer = {
@@ -18,6 +18,7 @@ export type StoredPlayer = {
   role: 'innocent' | 'mole' | 'spectator' | null;
   moleRounds: number[];
   clue: string | null;
+  clueDrawing: DrawingPayload | null;
   clueRevealed: boolean;
   clueSkipped: boolean;
   vote: string | null;
@@ -27,6 +28,12 @@ export type StoredPlayer = {
   personality?: BotPersonality;
   botMind?: BotMind;
   queuedForNextRound?: boolean;
+  note: string;
+  voteConfidence: 1 | 2 | 3 | null;
+  prediction: string | null;
+  reactionsUsed: string[];
+  afk: boolean;
+  autopilot: boolean;
 };
 
 export type RoomState = {
@@ -53,6 +60,13 @@ export type RoomState = {
   message: string | null;
   serverSequence: number;
   processedEvents: string[];
+  featureFlags: FeatureFlags;
+  voteRevealItems: VoteRevealItem[];
+  reactions: ReactionSummary;
+  history: RoundHistory[];
+  chaosModifier: string | null;
+  revoteUsed: boolean;
+  crowdWords: { playerId: string; word: string }[];
 };
 
 export type Env = {
@@ -61,4 +75,12 @@ export type Env = {
   AI?: Ai;
   AI_MODEL?: string;
   LOAD_TEST?: string;
+  FEATURE_FLAGS_JSON?: string;
+  KILL_AI?: string;
+  KILL_CHAT?: string;
+  KILL_CUSTOM_PACKS?: string;
+  KILL_DRAWING?: string;
+  KILL_SPECTATOR_PREDICTIONS?: string;
+  KILL_EXTERNAL_SHARING?: string;
+  KILL_COSMETICS?: string;
 };

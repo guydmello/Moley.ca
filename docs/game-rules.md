@@ -26,3 +26,15 @@ Do not say the word, spell it, use an obvious variation, or show another person 
 ## Alternate play
 
 Pass-the-phone keeps every role and vote behind a neutral handoff screen on one device. TV display mode shows join information, public stages, timers, results, and scores while never receiving roles, the unrevealed word, or individual votes.
+# Optional 2.4 rules
+
+Classic still uses spoken clues, immediate accusation, no defence/revote, all-at-once vote reveal and the original scoring below. Hosts can deliberately choose other presets or advanced rules:
+
+- Emoji clues accept emoji only. Drawing clues use a bounded in-app canvas with no image uploads.
+- Anonymous clues hide the author until the completed-round recap.
+- A defence phase lets accused players speak before one optional revote.
+- Confidence is expressive only; it does not change score or vote weight.
+- Vote reveal can be all at once, incremental, or anonymous.
+- Chaos announces one modifier for that round; it never changes private information boundaries.
+- Spectator predictions close with voting and reveal as aggregate totals only.
+- Rematches can preserve scores, reset scores, or return to setup.

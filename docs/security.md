@@ -48,3 +48,12 @@ The automated core tests cover illegal transitions, scoring boundaries, tie cuto
 10. Lock the room and verify new players cannot take active seats.
 
 Record date, deployment SHA, browser versions, and outcome for the release checklist. Do not claim a production penetration test from local unit coverage.
+# Replayability security regression
+
+Moley 2.4 adds no image upload endpoint. Drawing clues are Zod-validated normalized coordinates with per-stroke and total-point caps. Notes are length-bounded and private. Crowd/custom packs have count, size, duplicate, singular/plural and blacklist controls. Reactions and predictions are bounded by role, stage and count.
+
+Feature kill switches are enforced on the Worker, not merely hidden in the React UI. Completed history is bounded. Spectator predictions, private notes, reconnect tokens, roles and secret words are excluded from public projections until their explicitly safe reveal state (predictions reveal as totals only; notes and tokens never reveal).
+
+The Game Health support code contains build/protocol, broad capability booleans, connection state, latency bucket data, stage and seat count. It excludes room codes, names, text content, role/word data, votes and identifiers.
+
+This section is a release regression note, not the separate comprehensive security or penetration audit planned after feature completion.

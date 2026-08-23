@@ -22,5 +22,8 @@
     { "pattern": "moley.ca", "custom_domain": true },
     { "pattern": "www.moley.ca", "custom_domain": true }
   ],
-  "vars": { "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast" }
+  "vars": {
+    "AI_MODEL": "@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+    "FEATURE_FLAGS_JSON": "{\"ai\":\"production\",\"chat\":\"production\",\"customPacks\":\"beta\",\"drawing\":\"beta\",\"spectatorPredictions\":\"beta\",\"externalSharing\":\"production\",\"cosmetics\":\"beta\",\"chaos\":\"beta\",\"audience\":\"beta\",\"careerStats\":\"production\",\"french\":\"beta\"}"
+  }
 }
