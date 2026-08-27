@@ -30,7 +30,8 @@ async function finishVoteAndRound(page: Page) {
 
 test('cached production PWA completes, restores, and rematches a true offline local game', async ({ page, context }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'One production service-worker project is sufficient.');
-  await page.goto('http://127.0.0.1:8787/local');
+  const productionOrigin = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8787';
+  await page.goto(`${productionOrigin}/local`);
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   const cachedUrls = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (key) => (await caches.open(key)).keys()))).flat().map((request) => request.url));
   expect(cachedUrls.some((url) => url.includes('/api/'))).toBe(false);
