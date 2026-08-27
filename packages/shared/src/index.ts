@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const APP_VERSION = '2.5.0';
+export const APP_VERSION = '2.6.0';
 export const PROTOCOL_VERSION = 3 as const;
 export const MIN_PROTOCOL_VERSION = 3;
 export const MAX_PROTOCOL_VERSION = 3;

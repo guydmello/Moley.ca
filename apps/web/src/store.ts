@@ -117,8 +117,6 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-void useGame.getState().loadRuntime();
-
 export function restoreSession(code: string): Session | null {
   try {
     const value = JSON.parse(localStorage.getItem(keyFor(code)) ?? 'null') as Partial<Session> | null;

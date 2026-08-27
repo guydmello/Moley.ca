@@ -13,13 +13,15 @@ import { restoreSession, useGame } from './store';
 import { UtilityMenu } from './UtilityMenu';
 import { useDialogFocus } from './dialog';
 import { decodePackWords } from './pack-codec';
+import { LocalPlay } from './LocalPlay';
+import { loadLocalGame } from './local-storage';
 
 const FeatureSettingsDialog = lazy(() => import('./FeatureSettingsDialog').then((module) => ({ default: module.FeatureSettingsDialog })));
 const DrawingPad = lazy(() => import('./DrawingPad').then((module) => ({ default: module.DrawingPad })));
 const DrawingReveal = lazy(() => import('./DrawingPad').then((module) => ({ default: module.DrawingReveal })));
 function LazyDrawingReveal({ drawing }: { drawing: DrawingPayload }) { return <Suspense fallback={<div className="drawing-loading">Loading drawing…</div>}><DrawingReveal drawing={drawing} /></Suspense>; }
 
-type Route = { page: 'home' | 'how' | 'join' | 'play' | 'display' | 'pass'; code?: string };
+type Route = { page: 'home' | 'how' | 'join' | 'play' | 'display' | 'local' | 'pass'; code?: string };
 
 function routeFromPath(): Route {
   const [, first, second] = location.pathname.split('/');
@@ -27,6 +29,7 @@ function routeFromPath(): Route {
   if (first === 'join') return { page: 'join', code: normalizeRoomCode(second ?? '') };
   if (first === 'play') return { page: 'play', code: normalizeRoomCode(second ?? '') };
   if (first === 'display') return { page: 'display', code: normalizeRoomCode(second ?? '') };
+  if (first === 'local') return { page: 'local' };
   if (first === 'pass-the-phone') return { page: 'pass' };
   return { page: 'home' };
 }
@@ -43,7 +46,8 @@ export function App() {
   if (route.page === 'join') return <JoinPage code={route.code ?? ''} go={go} />;
   if (route.page === 'play') return <GamePage code={route.code ?? ''} go={go} />;
   if (route.page === 'display') return <DisplayPage code={route.code ?? ''} go={go} />;
-  if (route.page === 'pass') return <PassThePhone go={go} />;
+  if (route.page === 'local') return <LocalPlay go={go} />;
+  if (route.page === 'pass') return <LocalPlay go={go} initialPreset="pass-the-phone" />;
   return <Home go={go} />;
 }
 
@@ -57,7 +61,10 @@ function Home({ go }: { go: (path: string) => void }) {
   const [panel, setPanel] = useState<'create' | 'join' | null>(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('moley:theme') ?? 'system');
   const [tutorial, setTutorial] = useState(() => !localStorage.getItem('moley:tutorial'));
+  const [online, setOnline] = useState(navigator.onLine);
+  const [hasLocalSave, setHasLocalSave] = useState(false);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('moley:theme', theme); }, [theme]);
+  useEffect(() => { void loadLocalGame().then((recovery) => setHasLocalSave(recovery.status !== 'none')); const update = () => setOnline(navigator.onLine); addEventListener('online', update); addEventListener('offline', update); return () => { removeEventListener('online', update); removeEventListener('offline', update); }; }, []);
   return <div className="site-shell">
     <nav className="site-nav wrap">
       <Brand go={go} />
@@ -72,14 +79,16 @@ function Home({ go }: { go: (path: string) => void }) {
     <main>
       <section className="hero wrap">
         <div className="hero-copy">
+          {!online && <div className="home-offline"><WifiOff /> You're offline — Local Moley still works.</div>}
           <div className="eyebrow"><span className="live-dot" /> THE SOCIAL DEDUCTION GAME</div>
           <h1>Find the Mole.<br /><em>Protect the Word.</em></h1>
           <p className="hero-lede">One secret word. One suspicious friend. Give clever clues, catch the bluff, and don’t hand the Mole the answer.</p>
           <div className="hero-actions">
-            <button className="button button-primary button-xl" onClick={() => setPanel('create')}><Play size={20} fill="currentColor" /> Create game</button>
-            <button className="button button-light button-xl" onClick={() => setPanel('join')}><ArrowRight size={20} /> Join game</button>
+            <button className="button button-primary button-xl" onClick={() => go('/local')}><Smartphone size={20} /> {hasLocalSave ? 'Resume Local Game' : 'Play Locally'}</button>
+            <button className="button button-light button-xl" aria-label="Create game" onClick={() => setPanel('create')}><Globe2 size={20} /> Create Online Game</button>
+            <button className="button button-light button-xl" aria-label="Join game" onClick={() => setPanel('join')}><ArrowRight size={20} /> Join Online Game</button>
           </div>
-          <button className="pass-link" onClick={() => go('/pass-the-phone')}><Smartphone size={18} /> One phone or want to practise? <strong>Pass it around offline</strong> <ChevronRight size={16} /></button>
+          <button className="pass-link" onClick={() => go('/pass-the-phone')}><Smartphone size={18} /> One phone? <strong>Pass it around privately</strong> <ChevronRight size={16} /></button>
           <div className="trust-row"><span><Check size={15} /> No accounts</span><span><Check size={15} /> Free to play</span><span><Check size={15} /> Works anywhere</span></div>
         </div>
         <div className="hero-art" aria-label="Moley secret agent mascot peeking from an underground tunnel">
@@ -119,7 +128,7 @@ function Home({ go }: { go: (path: string) => void }) {
         <div className="score-cards"><ScoreCard result="MOLE ESCAPES" mole="+2" team="0" tone="dark" /><ScoreCard result="CAUGHT + GUESSES WORD" mole="+1" team="0" tone="orange" /><ScoreCard result="CAUGHT + WRONG GUESS" mole="0" team="+2 each" tone="lime" /></div>
       </section>
 
-      <section className="privacy-strip wrap"><ShieldCheck size={32} /><div><strong>Secrets stay secret.</strong><span>Private roles, votes, and scores are decided by the game server—not your browser.</span></div><div className="privacy-pills"><span>No email</span><span>No tracking profile</span><span>Rooms expire</span></div></section>
+      <section className="privacy-strip wrap"><ShieldCheck size={32} /><div><strong>Secrets stay secret.</strong><span>Online roles are server-authoritative. Local roles use private hand-off screens and device-only storage.</span></div><div className="privacy-pills"><span>No email</span><span>No tracking profile</span><span>Local stays local</span></div></section>
 
       <section className="faq wrap"><div className="section-kicker">QUESTIONS, ANSWERED</div><h2>Before you start digging.</h2><div className="faq-list">
         <details><summary>How many people do we need?<Plus /></summary><p>Four seats is ideal, and any mix of humans and bots works. Large rooms are welcome; Moley recommends rapid typed clues when the roster grows.</p></details>
@@ -201,7 +210,8 @@ function JoinPage({ code, go }: { code: string; go: (path: string) => void }) {
 function CenteredPage({ children, go }: { children: ReactNode; go: (path: string) => void }) { return <div className="centered-page"><nav className="site-nav wrap"><Brand go={go} /></nav><main>{children}</main></div>; }
 
 function GamePage({ code, go }: { code: string; go: (path: string) => void }) {
-  const connect = useGame((state) => state.connect); const session = useGame((state) => state.session); const room = useGame((state) => state.room); const updateRequired = useGame((state) => state.updateRequired);
+  const connect = useGame((state) => state.connect); const loadRuntime = useGame((state) => state.loadRuntime); const session = useGame((state) => state.session); const room = useGame((state) => state.room); const updateRequired = useGame((state) => state.updateRequired);
+  useEffect(() => { void loadRuntime(); }, [loadRuntime]);
   useEffect(() => { if (!session || session.code !== code) { const saved = restoreSession(code); if (saved) connect(saved); } }, [code, connect, session]);
   if ((!session || session.code !== code) && !restoreSession(code)) return <JoinPage code={code} go={go} />;
   if (updateRequired) return <CenteredPage go={go}><div className="standalone-card"><RefreshCw /><span className="section-kicker">UPDATE READY</span><h1>Refresh to rejoin</h1><p>Your private seat token is saved on this device.</p><button className="button button-primary" onClick={() => location.reload()}>Refresh Moley</button></div></CenteredPage>;
@@ -340,7 +350,7 @@ function DisplayPage({ code, go }: { code: string; go: (path: string) => void })
 function HowTo({ go }: { go: (path: string) => void }) { return <div className="rules-page"><nav className="site-nav wrap"><Brand go={go} /><button className="button button-primary" onClick={() => go('/')}><Play /> Play now</button></nav><main className="rules-wrap"><div className="rules-hero"><span className="section-kicker">THE TWO-MINUTE GUIDE</span><h1>How to play Moley</h1><p>Find the Mole without revealing the word they’re trying to steal.</p></div><section className="rules-roles"><article><div className="rules-icon innocent"><ShieldCheck /></div><h2>If you know the word</h2><p>Give a clue that proves you know it, but stays subtle enough that the Mole cannot figure it out.</p><div className="example"><span>SECRET WORD · APPLE</span><strong>Good clue: “orchard”</strong><small>Risky clue: “red fruit”</small></div></article><article><div className="rules-icon mole"><Eye /></div><h2>If you’re the Mole</h2><p>Listen to every clue, act like you belong, and infer the secret before the group catches you.</p><div className="example dark"><span>YOU SEE · THE CATEGORY</span><strong>Blend in. Stay broad.</strong><small>If caught, guess the word for +1.</small></div></article></section><section className="round-flow"><span className="section-kicker">ONE ROUND</span><h2>Clue. Discuss. Vote. Reveal.</h2><ol><li><b>1</b><div><strong>Reveal privately</strong><p>Only look at your own screen.</p></div></li><li><b>2</b><div><strong>Give one clue</strong><p>Spoken or typed, in random order.</p></div></li><li><b>3</b><div><strong>Talk it out</strong><p>Question clues that felt too broad.</p></div></li><li><b>4</b><div><strong>Vote secretly</strong><p>Pick one suspect. No self-votes.</p></div></li><li><b>5</b><div><strong>Reveal and score</strong><p>A caught Mole gets one final guess.</p></div></li></ol></section><section className="rules-scoring"><span className="section-kicker light">SCORING</span><h2>First to 5 wins.</h2><div><ScoreCard result="MOLE ESCAPES" mole="+2" team="0" tone="dark" /><ScoreCard result="CAUGHT + RIGHT GUESS" mole="+1" team="0" tone="orange" /><ScoreCard result="CAUGHT + WRONG GUESS" mole="0" team="+2 each" tone="lime" /></div><p>With multiple Moles, each one scores individually. Innocents earn points only if every Mole is caught and none guesses the word.</p></section><section className="rules-cta"><img src="/moley-mascot.png" alt="Moley mascot" /><div><h2>Ready to look suspicious?</h2><p>No account. No download. One minute to start.</p></div><button className="button button-lime button-xl" onClick={() => go('/')}><Play /> Start digging</button></section></main></div>; }
 
 type PassStage = 'setup' | 'roles' | 'clues' | 'votes' | 'result';
-function PassThePhone({ go }: { go: (path: string) => void }) {
+export function PassThePhone({ go }: { go: (path: string) => void }) {
   const [names, setNames] = useState(['', '', '', '']);
   const [bots, setBots] = useState<string[]>([]);
   const [stage, setStage] = useState<PassStage>('setup');

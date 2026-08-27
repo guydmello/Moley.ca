@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.6.0 — 2026-08-27
+
+- Promoted Local Play to a primary home-screen mode with Local Classic, Local + Bots, Pass the Phone, Big Screen Party, and Offline Cottage presets.
+- Added a browser-authoritative local engine built on the same `@moley/game-core` rules used by online rooms, with 5×5 through 10×10 boards, complete rounds, secret voting, scoring, match completion, and rematches.
+- Added IndexedDB recovery with an encoded write-ahead fallback, explicit resume/new-game choices, and graceful partial recovery for damaged saves.
+- Added fair randomized clue order per round, full order display, bot/human inclusion, and protection against repeating the identical order in consecutive rounds.
+- Added structured bot clue metadata, normalized per-round clue reservation, difficulty/personality variation, repeated-word memory, deterministic Mole deduction, contextual voting, and unique discussion lines.
+- Added device-only custom packs and kept bot secrets restricted to entries with audited deterministic clue support.
+- Removed local-mode runtime configuration fetching so cached Local Play makes no backend, WebSocket, Workers AI, or API request.
+- Added true network-disabled PWA coverage, Back/Forward privacy recovery, 50-round 10×10/10-bot simulation, semantic clue tests, board uniqueness tests, and bot-coverage gates.
+
 ## 2.5.0 — 2026-08-23
 
 - Fixed a critical projection flaw that exposed custom-word and category pools to Moles and spectators.

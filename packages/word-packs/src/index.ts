@@ -6,10 +6,38 @@ export type WordEntry = {
   difficulty: 'easy' | 'medium' | 'hard';
   tags: string[];
   safeBotClues: string[];
+  botClues?: {
+    direct: string[];
+    medium: string[];
+    subtle: string[];
+  };
+  relatedConcepts?: string[];
+  botEnabled?: boolean;
   familySafe: boolean;
   contentLevel?: 'family' | 'teen';
   pack?: string;
   lastReviewed?: string;
+};
+
+type BotMetadata = Required<Pick<WordEntry, 'botClues' | 'relatedConcepts'>>;
+
+const BOT_METADATA: Record<string, BotMetadata> = {
+  Apple: { botClues: { direct: ['fruit', 'orchard', 'core'], medium: ['cider', 'pie', 'lunchbox', 'crisp'], subtle: ['Newton', 'teacher', 'harvest'] }, relatedConcepts: ['tree', 'red', 'green', 'snack'] },
+  Hockey: { botClues: { direct: ['puck', 'rink', 'goalie'], medium: ['ice', 'stick', 'penalty', 'Zamboni'], subtle: ['Canada', 'power play', 'faceoff'] }, relatedConcepts: ['sport', 'winter', 'skates', 'arena'] },
+  Paris: { botClues: { direct: ['France', 'Eiffel', 'capital'], medium: ['Seine', 'croissant', 'Louvre', 'metro'], subtle: ['fashion', 'arrondissement', 'lights'] }, relatedConcepts: ['city', 'Europe', 'landmark', 'French'] },
+  Penguin: { botClues: { direct: ['Antarctica', 'bird', 'waddles'], medium: ['tuxedo', 'colony', 'ice', 'flightless'], subtle: ['emperor', 'black-and-white', 'rookery'] }, relatedConcepts: ['animal', 'cold', 'ocean', 'feathers'] },
+  Hammer: { botClues: { direct: ['nail', 'tool', 'strike'], medium: ['carpenter', 'handle', 'workbench', 'claw'], subtle: ['gavel', 'forge', 'Thor'] }, relatedConcepts: ['build', 'metal', 'repair', 'workshop'] },
+  'Eiffel Tower': { botClues: { direct: ['Paris', 'France', 'landmark'], medium: ['iron', 'skyline', 'monument', 'Gustave'], subtle: ['exposition', 'lattice', 'Champ de Mars'] }, relatedConcepts: ['tower', 'Europe', 'travel', 'architecture'] },
+  Pizza: { botClues: { direct: ['slice', 'cheese', 'pepperoni'], medium: ['oven', 'crust', 'delivery', 'toppings'], subtle: ['Naples', 'triangle', 'pizzeria'] }, relatedConcepts: ['food', 'Italian', 'dinner', 'tomato'] },
+  Dog: { botClues: { direct: ['bark', 'puppy', 'leash'], medium: ['fetch', 'kennel', 'walk', 'collar'], subtle: ['loyal', 'canine', 'wag'] }, relatedConcepts: ['pet', 'animal', 'companion', 'paws'] },
+  Canada: { botClues: { direct: ['maple', 'Ottawa', 'provinces'], medium: ['hockey', 'toque', 'loonie', 'north'], subtle: ['mosaic', 'Dominion', 'red-and-white'] }, relatedConcepts: ['country', 'flag', 'winter', 'Toronto'] },
+  Guitar: { botClues: { direct: ['strings', 'instrument', 'strum'], medium: ['frets', 'chord', 'amp', 'acoustic'], subtle: ['riff', 'pick', 'six'] }, relatedConcepts: ['music', 'band', 'melody', 'concert'] },
+  Moon: { botClues: { direct: ['night', 'lunar', 'crater'], medium: ['orbit', 'tides', 'crescent', 'eclipse'], subtle: ['Apollo', 'waxing', 'satellite'] }, relatedConcepts: ['space', 'Earth', 'sky', 'astronaut'] },
+  Coffee: { botClues: { direct: ['caffeine', 'mug', 'beans'], medium: ['roast', 'morning', 'espresso', 'brew'], subtle: ['aroma', 'barista', 'grind'] }, relatedConcepts: ['drink', 'cafe', 'hot', 'breakfast'] },
+  Car: { botClues: { direct: ['drive', 'wheels', 'engine'], medium: ['traffic', 'garage', 'seatbelt', 'highway'], subtle: ['odometer', 'commute', 'ignition'] }, relatedConcepts: ['vehicle', 'road', 'transport', 'fuel'] },
+  Book: { botClues: { direct: ['read', 'pages', 'author'], medium: ['library', 'chapter', 'cover', 'story'], subtle: ['spine', 'bookmark', 'edition'] }, relatedConcepts: ['literature', 'paper', 'novel', 'words'] },
+  Beach: { botClues: { direct: ['sand', 'ocean', 'waves'], medium: ['sunscreen', 'towel', 'shore', 'shells'], subtle: ['tide', 'boardwalk', 'dunes'] }, relatedConcepts: ['summer', 'water', 'vacation', 'coast'] },
+  Rainbow: { botClues: { direct: ['colours', 'rain', 'arc'], medium: ['prism', 'spectrum', 'sunlight', 'sky'], subtle: ['refraction', 'pot of gold', 'seven'] }, relatedConcepts: ['weather', 'light', 'clouds', 'bright'] }
 };
 
 const PACKS: Record<string, string> = {
@@ -107,18 +135,24 @@ const CATEGORY_CLUES: Record<string, string[]> = {
 const slug = (value: string) => value.toLocaleLowerCase('en-CA').normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 export const words: WordEntry[] = Object.entries(PACKS).flatMap(([category, values]) =>
-  values.split('|').map((display, index) => ({
+  values.split('|').map((display, index) => {
+    const metadata = category === 'Brands' && display === 'Apple' ? undefined : BOT_METADATA[display];
+    return ({
     id: `${slug(category)}-${slug(display)}`,
     display,
     category,
     difficulty: index % 7 === 0 ? 'hard' : index % 3 === 0 ? 'medium' : 'easy',
     tags: [slug(category), ...display.toLocaleLowerCase('en-CA').split(/\s+/).filter((part) => part.length > 3)],
-    safeBotClues: CATEGORY_CLUES[category] ?? ['familiar', 'everyday', category.toLocaleLowerCase('en-CA')],
+    safeBotClues: metadata ? [...metadata.botClues.direct, ...metadata.botClues.medium, ...metadata.botClues.subtle] : (CATEGORY_CLUES[category] ?? [category.toLocaleLowerCase('en-CA')]),
+    botClues: metadata?.botClues,
+    relatedConcepts: metadata?.relatedConcepts,
+    botEnabled: Boolean(metadata),
     familySafe: true,
     contentLevel: 'family' as const,
     pack: category === 'Internet Culture' ? 'internet-culture-2026' : category === 'Canada' ? 'canada-expanded' : 'core',
     lastReviewed: category === 'Internet Culture' ? '2026-08-23' : undefined
-  }))
+    });
+  })
 );
 
 export const categories = Object.entries(PACKS).map(([name, values]) => ({
@@ -136,3 +170,4 @@ export function pickWord(selected: string[], recentlyUsed: string[], random: () 
 }
 
 export const WORD_COUNT = words.length;
+export const botSupportedWords = words.filter((word) => word.botEnabled);

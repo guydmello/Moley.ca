@@ -27,9 +27,9 @@ export function runtimeConfig(env: Env): RuntimeConfig {
     protocolRange: { min: MIN_PROTOCOL_VERSION, max: MAX_PROTOCOL_VERSION },
     features: runtimeFeatures(env),
     release: {
-      title: 'Pre-launch security and reliability release',
-      publishedAt: '2026-08-23',
-      highlights: ['Stronger role and secret privacy', 'Durable abuse protection and safer reconnects', 'Cross-browser, offline and large-room validation']
+      title: 'Offline-first Local Play',
+      publishedAt: '2026-08-27',
+      highlights: ['Complete local matches with no backend or AI', 'Smart unique deterministic bot clues', '5×5–10×10 boards with saved recovery and fair round order']
     }
   };
 }

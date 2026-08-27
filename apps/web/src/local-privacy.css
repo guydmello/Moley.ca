@@ -1,0 +1,19 @@
+html:not([data-local-private="revealed"]) .local-role.revealed > * {
+  visibility: hidden;
+}
+
+html:not([data-local-private="revealed"]) .local-role.revealed::after {
+  content: "Tap to reveal privately";
+  position: absolute;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+html:not([data-local-private="revealed"]) .local-private .local-role.revealed + .button {
+  display: none;
+}
+
+.local-role.revealed {
+  position: relative;
+}

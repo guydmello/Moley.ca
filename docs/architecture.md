@@ -2,10 +2,11 @@
 
 ## System shape
 
-The browser is a renderer and input device. It never owns authoritative roles, words, votes, timers, scores, bot decisions, host status, or win conditions.
+Moley has two explicit authority boundaries. Online rooms remain server-authoritative: the browser is only a renderer and input device and never owns online roles, words, votes, timers, scores, bot decisions, host status, or win conditions. Local rooms are intentionally browser-authoritative and never connect to the backend.
 
 ```text
 React/PWA client
+  ├── LocalGame engine → IndexedDB recovery (offline, device-only)
   │ HTTPS create/join + versioned WebSocket events
   ▼
 Cloudflare Worker router
@@ -22,6 +23,14 @@ GameRoom Durable Object (one instance per room)
 ```
 
 The frontend is built to static assets and served by the same Worker, so production has one origin, one deployment, and no CORS or cookie dependency.
+
+## Local authority and offline privacy
+
+`@moley/game-core/local` owns local round setup, role assignment, randomized clue order, deterministic bot decisions, voting, scoring, and rematches. It reuses the same mole assignment, scoring, normalization, vote reasoning, and word metadata as online rooms. The Local Play React route does not initialize runtime configuration, create a WebSocket, call Workers AI, or use a room API.
+
+Active state is stored in IndexedDB after every transition. An encoded localStorage write-ahead copy closes the small gap while an IndexedDB transaction is committing; recovery chooses the newest valid copy. Private role visibility is UI-only state and is never persisted, so reload, Back, Forward, and orientation remounts return to a neutral handoff screen.
+
+This provides practical party-game privacy, not cryptographic isolation from the device owner. A technically sophisticated person with physical access and developer tools can inspect device storage. Local saves never leave the device unless the user exports their own custom word list.
 
 ## Room identity and joining
 
@@ -80,7 +89,7 @@ Rooms accept at most 100 active players and 200 spectators. Lists and turn rails
 ## Repository
 
 ```text
-apps/web        React client, PWA, display and pass-the-phone modes
+apps/web        React client, PWA, online display and offline-first Local Play
 apps/worker     Worker router, Durable Object, AI adapter, security controls
 packages/shared Versioned protocol, schemas, public/private types
 packages/game-core State machine, selection, voting, scoring, bot reasoning

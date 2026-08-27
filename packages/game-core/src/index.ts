@@ -82,6 +82,20 @@ export function shuffled<T>(items: T[], random: () => number = Math.random): T[]
   return result;
 }
 
+export function fairTurnOrder(ids: string[], recentFirstIds: string[], random: () => number = Math.random): string[] {
+  const order = shuffled(ids, random);
+  if (order.length < 2) return order;
+  const recent = new Set(recentFirstIds.slice(-2));
+  if (recent.has(order[0]!)) {
+    const alternatives = order.map((id, index) => ({ id, index })).filter(({ id }) => !recent.has(id));
+    if (alternatives.length && random() < 0.8) {
+      const choice = alternatives[Math.floor(random() * alternatives.length)]!;
+      [order[0], order[choice.index]] = [order[choice.index]!, order[0]!];
+    }
+  }
+  return order;
+}
+
 export type RankedVote = { playerId: string; votes: number };
 export type VoteResolution = { accusedIds: string[]; tiedIds: string[]; ranked: RankedVote[] };
 
@@ -149,12 +163,25 @@ export function randomPersonality(random: () => number = Math.random): BotPerson
   return PERSONALITIES[Math.floor(random() * PERSONALITIES.length)]!;
 }
 
-export function innocentBotClue(word: WordEntry, usedClues: string[], difficulty: BotDifficulty, random: () => number = Math.random): string {
-  const choices = word.safeBotClues.filter((clue) => !usedClues.some((used) => normalizeGuess(used) === normalizeGuess(clue)));
-  const safe = choices.length ? choices : ['familiar', 'recognizable', 'classic'];
-  const indexBias = difficulty === 'easy' ? 0 : difficulty === 'sneaky' ? safe.length - 1 : Math.floor(safe.length / 2);
-  const index = Math.max(0, Math.min(safe.length - 1, Math.round((indexBias + random() * safe.length) / 2)));
-  return safe[index]!;
+export function normalizeClueKey(value: string): string {
+  const normalized = normalizeGuess(value);
+  return normalized.length > 4 && normalized.endsWith('s') ? normalized.slice(0, -1) : normalized;
+}
+
+export function innocentBotClue(word: WordEntry, usedClues: string[], difficulty: BotDifficulty, random: () => number = Math.random, personality: BotPersonality = 'detective'): string {
+  const groups = word.botClues;
+  const ordered = groups
+    ? difficulty === 'easy' || personality === 'literal' ? [...groups.direct, ...groups.medium, ...groups.subtle]
+      : difficulty === 'sneaky' || ['creative', 'cautious', 'quiet'].includes(personality) ? [...groups.subtle, ...groups.medium, ...groups.direct]
+        : [...groups.medium, ...groups.direct, ...groups.subtle]
+    : word.safeBotClues;
+  const used = new Set(usedClues.map(normalizeClueKey));
+  const valid = ordered.filter((clue) => !used.has(normalizeClueKey(clue)) && validateBotClue(clue, word, 80));
+  const secondary = [...(word.relatedConcepts ?? []), ...word.tags, word.category].filter((clue) => !used.has(normalizeClueKey(clue)) && validateBotClue(clue, word, 80));
+  const safe = valid.length ? valid : secondary;
+  if (!safe.length) return `related to ${word.category.toLocaleLowerCase('en-CA')}`;
+  const window = personality === 'chaotic' ? safe : safe.slice(0, Math.min(4, safe.length));
+  return window[Math.floor(random() * window.length)]!;
 }
 
 export function validateBotClue(clue: string, word: WordEntry, maxLength: number): boolean {
@@ -168,18 +195,37 @@ export function updateMoleCandidates(mind: BotMind, clue: string, candidateWords
   const clueTerms = new Set(normalizeGuess(clue).split(' '));
   const candidates = candidateWords.map((word) => {
     const previous = mind.candidates.find((item) => item.word === word.display)?.confidence ?? 0.1;
-    const evidence = [...word.tags, ...word.safeBotClues].some((term) => [...clueTerms].some((part) => normalizeGuess(term).includes(part))) ? 0.3 : -0.02;
+    const knowledge = [...word.tags, ...word.safeBotClues, ...(word.relatedConcepts ?? [])];
+    const matches = knowledge.filter((term) => [...clueTerms].some((part) => normalizeGuess(term).includes(part) || part.includes(normalizeGuess(term)))).length;
+    const evidence = matches ? 0.22 + matches * 0.12 : -0.02;
     return { word: word.display, confidence: Math.max(0.01, previous + evidence) };
   }).sort((a, b) => b.confidence - a.confidence).slice(0, 12);
   return { ...mind, candidates };
 }
 
 export function moleBotClue(mind: BotMind, observedClues: string[], difficulty: BotDifficulty, random: () => number = Math.random): string {
-  const generic = ['popular', 'memorable', 'classic', 'everyday', 'recognizable'];
-  if (difficulty === 'easy' || !mind.candidates.length) return generic[Math.floor(random() * generic.length)]!;
-  const mimic = observedClues.filter((clue) => clue.length < 24).at(-1);
-  if (difficulty === 'sneaky' && mimic && random() > 0.45) return mimic.split(' ')[0] ?? 'familiar';
-  return generic[Math.floor(random() * generic.length)]!;
+  const broad = ['category fit', 'commonly known', 'widely seen', 'recognizable'];
+  if (difficulty === 'easy' || !mind.candidates.length) return broad[Math.floor(random() * broad.length)]!;
+  const fresh = broad.filter((clue) => !observedClues.some((used) => normalizeClueKey(used) === normalizeClueKey(clue)));
+  return (fresh.length ? fresh : broad)[Math.floor(random() * (fresh.length || broad.length))]!;
+}
+
+export function moleBotClueFromCandidates(
+  mind: BotMind,
+  observedClues: string[],
+  candidateWords: WordEntry[],
+  usedClues: string[],
+  difficulty: BotDifficulty,
+  personality: BotPersonality,
+  random: () => number = Math.random
+): string {
+  const confidence = mind.candidates[0]?.confidence ?? 0;
+  const guess = candidateWords.find((word) => word.display === mind.candidates[0]?.word);
+  if (guess && confidence >= (difficulty === 'sneaky' ? 0.25 : 0.45)) return innocentBotClue(guess, [...usedClues, ...observedClues], difficulty === 'easy' ? 'normal' : 'sneaky', random, personality);
+  const category = candidateWords[0]?.category ?? 'the category';
+  const broad = [`fits ${category}`, `common in ${category}`, category.toLocaleLowerCase('en-CA')];
+  const used = new Set([...usedClues, ...observedClues].map(normalizeClueKey));
+  return broad.find((clue) => !used.has(normalizeClueKey(clue))) ?? 'loosely connected';
 }
 
 export function botVote(
@@ -204,3 +250,5 @@ export function botVote(
   }).sort((a, b) => b.suspicion - a.suspicion);
   return scored[0]?.id ?? candidates[0]!;
 }
+
+export * from './local';
