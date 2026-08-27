@@ -4,8 +4,8 @@ const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
 
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: true,
-  workers: 2,
+  fullyParallel: !process.env.CI,
+  workers: process.env.CI ? 1 : 2,
   retries: process.env.CI ? 2 : 0,
   use: { baseURL: externalBaseURL ?? 'http://127.0.0.1:5190', trace: 'on-first-retry' },
   webServer: externalBaseURL ? undefined : [
