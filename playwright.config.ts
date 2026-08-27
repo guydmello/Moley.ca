@@ -1,6 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
+const workerStateDir = join(tmpdir(), `moley-playwright-${process.pid}`);
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -10,7 +13,7 @@ export default defineConfig({
   use: { baseURL: externalBaseURL ?? 'http://127.0.0.1:5190', trace: 'on-first-retry' },
   webServer: externalBaseURL ? undefined : [
     {
-      command: 'npm run dev -w @moley/worker',
+      command: `npm run dev -w @moley/worker -- --persist-to ${workerStateDir}`,
       url: 'http://127.0.0.1:8787/api/health',
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
