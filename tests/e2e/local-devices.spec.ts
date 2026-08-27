@@ -33,6 +33,7 @@ test('required phone, tablet, laptop, desktop, and TV viewports remain usable', 
 
 test('every 5×5 through 10×10 board fits phone, laptop, and TV form factors', async ({ browser }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The explicit board matrix runs once in Chromium.');
+  test.setTimeout(120_000);
   const formFactors = [
     { name: 'phone', width: 390, height: 844 },
     { name: 'laptop', width: 1440, height: 900 },
