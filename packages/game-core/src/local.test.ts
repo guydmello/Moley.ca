@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { botSupportedWords, words } from '@moley/word-packs';
 import {
   advanceLocalRole, beginLocalVoting, buildLocalCatalog, createLocalGame, createLocalPlayer, fairTurnOrder,
-  finishLocalRound, innocentBotClue, localSettingsForPreset, playLocalClue,
-  resolveLocalVoting, startLocalRound, submitLocalVote, validateLocalState
+  finishLocalRound, innocentBotClue, localSettingsForPreset, migrateLocalState, playLocalClue,
+  resolveLocalVoting, startLocalRound, submitLocalVote, toLocalPublicDisplay, validateLocalPublicDisplay, validateLocalRoster, validateLocalState
 } from './index';
 
 function seeded(seed = 1): () => number {
@@ -89,7 +89,7 @@ describe('complete offline local engine', () => {
 
   it('plays 50 bot-heavy rounds and rematches without backend or AI', () => {
     const random = seeded(8080);
-    const settings = { ...localSettingsForPreset('offline-cottage'), boardSize: 10 as const, targetScore: 999 };
+    const settings = { ...localSettingsForPreset('offline-cottage'), boardSize: 10 as const, targetScore: 100 };
     let state = createLocalGame(roster(1, 10), settings, random);
     const startedAt = performance.now();
     for (let round = 0; round < 50; round++) {
@@ -110,5 +110,77 @@ describe('complete offline local engine', () => {
     expect(state.roundNumber).toBe(50);
     expect(state.botClueMemory && Object.values(state.botClueMemory).every((clues) => clues.length <= 19)).toBe(true);
     expect(performance.now() - startedAt).toBeLessThan(2500);
+  });
+
+  it('uses a curated bot secret fallback while keeping selected pack words on the board', () => {
+    const settings = { ...localSettingsForPreset('local-bots'), boardSize: 5 as const, categories: ['Vegetables', 'Candy'] };
+    const state = startLocalRound(createLocalGame(roster(1, 3), settings, seeded(72)), words, seeded(73));
+    expect(words.find((entry) => entry.id === state.secretWordId)?.botEnabled).toBe(true);
+    expect(state.boardIds).toContain(state.secretWordId);
+    expect(state.boardIds).toHaveLength(25);
+  });
+});
+
+describe('local persistence and public projection', () => {
+  it('migrates a v1 save without losing its private round, board, or order', () => {
+    const state = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-bots'), seeded(81)), words, seeded(82));
+    const legacy = structuredClone(state) as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 1;
+    delete (legacy.settings as Record<string, unknown>).haptics;
+    const migrated = migrateLocalState(legacy, words);
+    expect(migrated?.schemaVersion).toBe(2);
+    expect(migrated?.settings.haptics).toBe(true);
+    expect(migrated?.secretWordId).toBe(state.secretWordId);
+    expect(migrated?.moleIds).toEqual(state.moleIds);
+    expect(migrated?.boardIds).toEqual(state.boardIds);
+    expect(migrated?.turnOrder).toEqual(state.turnOrder);
+    expect(validateLocalState(migrated, words)).toBe(true);
+  });
+
+  it('fails closed on damaged identities and unsupported schema versions', () => {
+    const state = createLocalGame(roster(), localSettingsForPreset('local-classic'), seeded(90));
+    const duplicate = structuredClone(state);
+    duplicate.players[1]!.id = duplicate.players[0]!.id;
+    expect(migrateLocalState(duplicate, words)).toBeNull();
+    expect(migrateLocalState({ ...state, schemaVersion: 999 }, words)).toBeNull();
+    expect(validateLocalRoster([{ ...state.players[0]!, name: ' Alex ' }, { ...state.players[1]!, name: 'Alex' }])).not.toEqual([]);
+  });
+
+  it('projects only allowlisted public TV fields before reveal', () => {
+    const state = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-bots'), seeded(91)), words, seeded(92));
+    state.votes[state.players[0]!.id] = state.players[1]!.id;
+    state.botMinds[state.players[2]!.id] = { candidates: [{ word: 'secret candidate', confidence: 1 }], suspicion: {} };
+    const snapshot = toLocalPublicDisplay(state, words);
+    const forbidden = new Set(['secretWordId', 'moleIds', 'votes', 'botMinds', 'botClueMemory', 'reconnectToken', 'guess']);
+    const visit = (value: unknown): void => {
+      if (!value || typeof value !== 'object') return;
+      for (const [key, child] of Object.entries(value)) { expect(forbidden.has(key), key).toBe(false); visit(child); }
+    };
+    visit(snapshot);
+    expect(validateLocalPublicDisplay(snapshot, state.sessionId)).toBe(true);
+    expect(validateLocalPublicDisplay({ ...snapshot, secretWordId: state.secretWordId }, state.sessionId)).toBe(false);
+    expect(snapshot.result).toBeNull();
+    expect(snapshot.visibility).toBe('pass');
+    expect(snapshot.voteCount).toBe(1);
+  });
+});
+
+describe('local transition and scoring guards', () => {
+  it('rejects malformed settings and duplicate or out-of-stage actions', () => {
+    const players = roster();
+    expect(() => createLocalGame(players, { ...localSettingsForPreset('local-classic'), boardSize: 11 as never }, seeded(100))).toThrow(/settings/i);
+    const state = startLocalRound(createLocalGame(players, localSettingsForPreset('local-classic'), seeded(101)), words, seeded(102));
+    expect(() => beginLocalVoting(state, words, seeded(103))).toThrow(/after the discussion/i);
+    expect(() => finishLocalRound(state, words, undefined, seeded(104))).toThrow(/not ready to score/i);
+  });
+
+  it('requires a caught human Mole to make exactly one final board guess', () => {
+    const started = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-classic'), seeded(105)), words, seeded(106));
+    const human = started.players.find((player) => player.kind === 'human')!;
+    const guessing = { ...started, stage: 'guess' as const, moleIds: [human.id], accusedIds: [human.id] };
+    expect(() => finishLocalRound(guessing, words, undefined, seeded(107))).toThrow(/must choose one final board word/i);
+    const scored = finishLocalRound(guessing, words, guessing.boardIds[0], seeded(108));
+    expect(['result', 'match-complete']).toContain(scored.stage);
+    expect(() => finishLocalRound(scored, words, guessing.boardIds[0], seeded(109))).toThrow(/already been scored/i);
   });
 });

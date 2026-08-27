@@ -1,6 +1,6 @@
 {
   "name": "moley",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -14,7 +14,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build -w @moley/web && playwright test",
     "test:load": "tsx tests/load/room-load.ts",
     "deploy": "npm run build && npm run deploy -w @moley/worker",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"

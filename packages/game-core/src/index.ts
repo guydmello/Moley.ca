@@ -82,6 +82,81 @@ export function shuffled<T>(items: T[], random: () => number = Math.random): T[]
   return result;
 }
 
+export const BOARD_SIZES = [5, 6, 7, 8, 9, 10] as const;
+export type BoardSize = typeof BOARD_SIZES[number];
+
+export function isBoardSize(value: number): value is BoardSize {
+  return Number.isInteger(value) && BOARD_SIZES.includes(value as BoardSize);
+}
+
+/**
+ * A stricter key than display normalization. It collapses punctuation,
+ * diacritics and conservative English plural variants so crafted packs cannot
+ * place APPLE / apples or BERRY / berries on the same board.
+ */
+export function normalizeWordKey(value: string): string {
+  const normalized = normalizeGuess(value);
+  const terms = normalized.split(' ').filter(Boolean);
+  const last = terms.at(-1);
+  if (!last || last.length <= 3) return normalized;
+  if (last.endsWith('ies') && last.length > 4) terms[terms.length - 1] = `${last.slice(0, -3)}y`;
+  else if (/(ches|shes|xes|zes)$/.test(last)) terms[terms.length - 1] = last.slice(0, -2);
+  else if (last.endsWith('s') && !last.endsWith('ss')) terms[terms.length - 1] = last.slice(0, -1);
+  return terms.join(' ');
+}
+
+export function dedupeWords(catalog: WordEntry[]): WordEntry[] {
+  const unique = new Map<string, WordEntry>();
+  for (const word of catalog) {
+    const key = normalizeWordKey(word.display);
+    if (!key) continue;
+    const existing = unique.get(key);
+    if (!existing || (word.botEnabled && !existing.botEnabled)) unique.set(key, word);
+  }
+  return [...unique.values()];
+}
+
+export function customWordEntries(displays: string[], prefix = 'custom'): WordEntry[] {
+  return dedupeWords(displays.map((display, index) => ({
+    id: `${prefix}-${index}-${normalizeGuess(display).replaceAll(' ', '-')}`,
+    display: display.trim(), aliases: [], category: 'Custom Pack', difficulty: 'medium' as const,
+    tags: ['custom'], safeBotClues: [], botEnabled: false, familySafe: true,
+    contentLevel: 'family' as const, pack: prefix
+  })).filter((word) => Boolean(normalizeWordKey(word.display))));
+}
+
+export function filterWordCatalog(catalog: WordEntry[], settings: Pick<GameSettings, 'categories' | 'wordBlacklist' | 'wordDifficulty' | 'contentLevel'>): WordEntry[] {
+  const selected = settings.categories.length ? new Set(settings.categories) : null;
+  const blacklist = new Set(settings.wordBlacklist.map(normalizeWordKey));
+  return dedupeWords(catalog.filter((word) =>
+    (!selected || selected.has(word.category) || word.category === 'Custom Pack') &&
+    !blacklist.has(normalizeWordKey(word.display)) &&
+    (settings.wordDifficulty === 'mixed' || word.difficulty === settings.wordDifficulty) &&
+    (settings.contentLevel !== 'family' || word.familySafe)
+  ));
+}
+
+export function buildWordBoard(
+  catalog: WordEntry[],
+  boardSize: number,
+  requiredWord: WordEntry | null = null,
+  random: () => number = Math.random
+): WordEntry[] {
+  if (!isBoardSize(boardSize)) throw new Error('Board size must be between 5 and 10.');
+  const unique = dedupeWords(catalog);
+  const requiredKey = requiredWord ? normalizeWordKey(requiredWord.display) : null;
+  const canonicalRequired = requiredWord
+    ? unique.find((word) => normalizeWordKey(word.display) === requiredKey) ?? requiredWord
+    : null;
+  const pool = unique.filter((word) => !requiredKey || normalizeWordKey(word.display) !== requiredKey);
+  const count = boardSize ** 2;
+  const chosen = canonicalRequired
+    ? [canonicalRequired, ...shuffled(pool, random).slice(0, count - 1)]
+    : shuffled(pool, random).slice(0, count);
+  if (chosen.length !== count) throw new Error(`This setup needs ${count} unique words for a ${boardSize}×${boardSize} board.`);
+  return shuffled(chosen, random);
+}
+
 export function fairTurnOrder(ids: string[], recentFirstIds: string[], random: () => number = Math.random): string[] {
   const order = shuffled(ids, random);
   if (order.length < 2) return order;
@@ -94,6 +169,44 @@ export function fairTurnOrder(ids: string[], recentFirstIds: string[], random: (
     }
   }
   return order;
+}
+
+export function newRoundTurnOrder(
+  ids: string[],
+  previousOrder: string[],
+  recentFirstIds: string[],
+  random: () => number = Math.random
+): string[] {
+  const order = fairTurnOrder(ids, recentFirstIds, random);
+  if (order.length > 1 && order.length === previousOrder.length && order.every((id, index) => id === previousOrder[index])) {
+    [order[0], order[1]] = [order[1]!, order[0]!];
+  }
+  return order;
+}
+
+export type ConfigurationContext = {
+  availableWords: WordEntry[];
+  fallbackBotWords?: WordEntry[];
+  botCount: number;
+  offline: boolean;
+};
+
+export type ConfigurationReview = { errors: string[]; warnings: string[] };
+
+export function validateConfiguration(settings: GameSettings, context: ConfigurationContext): ConfigurationReview {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const unique = dedupeWords(context.availableWords);
+  if (!unique.length) errors.push('No words match this setup. Choose more categories or loosen the filters.');
+  if (settings.boardEnabled && !isBoardSize(settings.boardSize)) errors.push('Board size must be between 5 and 10.');
+  if (settings.boardEnabled && unique.length < settings.boardSize ** 2) errors.push(`Add at least ${settings.boardSize ** 2} unique words for this board.`);
+  if (context.botCount > 0 && !unique.some((word) => word.botEnabled)) {
+    if (dedupeWords(context.fallbackBotWords ?? []).some((word) => word.botEnabled)) warnings.push('A curated bot-supported secret outside the selected filters will be used; selected words still fill the board.');
+    else errors.push('Games with bots need at least one audited bot-supported secret word.');
+  }
+  if (context.offline && settings.clueMode === 'drawing') warnings.push('Drawing clues are not available in Local Classic. Spoken clues will be used.');
+  if (settings.allowRevote && settings.defenceSeconds <= 0) warnings.push('Revote requires a defence phase and will stay off.');
+  return { errors, warnings };
 }
 
 export type RankedVote = { playerId: string; votes: number };
@@ -228,6 +341,23 @@ export function moleBotClueFromCandidates(
   return broad.find((clue) => !used.has(normalizeClueKey(clue))) ?? 'loosely connected';
 }
 
+export function moleBotGuess(
+  mind: BotMind,
+  candidateWords: WordEntry[],
+  difficulty: BotDifficulty,
+  random: () => number = Math.random
+): string {
+  const ranked = mind.candidates
+    .map((candidate) => candidateWords.find((word) => word.display === candidate.word))
+    .filter((word): word is WordEntry => Boolean(word));
+  const fallback = ranked.length ? ranked : candidateWords;
+  if (!fallback.length) return 'I have no idea';
+  const window = difficulty === 'easy' ? fallback.slice(0, 6) : difficulty === 'sneaky' ? fallback.slice(0, 2) : fallback.slice(0, 3);
+  const topBias = difficulty === 'sneaky' ? 0.78 : difficulty === 'normal' ? 0.58 : 0.34;
+  if (random() < topBias) return window[0]!.display;
+  return window[Math.floor(random() * window.length)]!.display;
+}
+
 export function botVote(
   selfId: string,
   playerIds: string[],
@@ -249,6 +379,27 @@ export function botVote(
     return { id, suspicion };
   }).sort((a, b) => b.suspicion - a.suspicion);
   return scored[0]?.id ?? candidates[0]!;
+}
+
+export function botDiscussionLine(
+  speakerName: string,
+  targetName: string,
+  targetClue: string,
+  related: boolean,
+  personality: BotPersonality,
+  usedLines: string[],
+  random: () => number = Math.random
+): string {
+  const weak = !targetClue || targetClue === 'Spoken clue' || targetClue.length < 4;
+  const templates = weak
+    ? [`${targetName}'s clue felt pretty broad.`, `I wanted more from ${targetName}'s clue.`, `${targetName} gave us very little to work with.`]
+    : related
+      ? [`${targetName}'s clue connected for me.`, `${targetName} took a believable angle.`, `I can follow what ${targetName} was getting at.`]
+      : [`I'm keeping an eye on ${targetName}.`, `${targetName}'s angle did not quite land for me.`, `${targetName} feels worth questioning.`];
+  const ordered = personality === 'confident' || personality === 'detective' ? templates : shuffled(templates, random);
+  const used = new Set(usedLines.map(normalizeClueKey));
+  const text = ordered.find((line) => !used.has(normalizeClueKey(line))) ?? `${speakerName} is still deciding.`;
+  return `${speakerName}: ${text}`;
 }
 
 export * from './local';

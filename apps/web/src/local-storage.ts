@@ -1,5 +1,5 @@
 import type { LocalGameState } from '@moley/game-core';
-import { validateLocalState } from '@moley/game-core';
+import { migrateLocalState } from '@moley/game-core';
 import { words } from '@moley/word-packs';
 
 const DATABASE = 'moley-local';
@@ -60,8 +60,10 @@ export async function loadLocalGame(): Promise<LocalRecovery> {
   const fallbackUpdated = fallbackValue && typeof fallbackValue === 'object' ? Number((fallbackValue as { updatedAt?: unknown }).updatedAt ?? 0) : 0;
   const raw = fallbackUpdated >= idbUpdated ? fallbackValue : idbValue;
   if (!raw) return { status: 'none' };
-  if (!validateLocalState(raw, words)) return { status: 'corrupt', raw };
-  return { status: 'valid', state: raw };
+  const migrated = migrateLocalState(raw, words);
+  if (!migrated) return { status: 'corrupt', raw };
+  if ((raw as { schemaVersion?: unknown }).schemaVersion !== migrated.schemaVersion) await saveLocalGame(migrated);
+  return { status: 'valid', state: migrated };
 }
 
 export async function clearLocalGame(): Promise<void> {

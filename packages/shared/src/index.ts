@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const APP_VERSION = '2.6.0';
+export const APP_VERSION = '2.7.0';
 export const PROTOCOL_VERSION = 3 as const;
 export const MIN_PROTOCOL_VERSION = 3;
 export const MAX_PROTOCOL_VERSION = 3;
@@ -45,6 +45,8 @@ export type GameStage = z.infer<typeof stageSchema>;
 
 export const settingsSchema = z.object({
   preset: z.enum(['classic', 'online', 'party', 'quick', 'big-group', 'family', 'chaos', 'sweaty', 'custom']).default('classic'),
+  boardEnabled: z.boolean().default(false),
+  boardSize: z.number().int().min(5).max(10).default(5),
   clueMode: z.enum(['spoken', 'typed', 'emoji', 'drawing']).default('spoken'),
   guessMode: z.enum(['typed', 'spoken']).default('typed'),
   moleCount: z.number().int().min(1).max(20).nullable().default(null),
@@ -95,13 +97,13 @@ export const defaultSettings: GameSettings = settingsSchema.parse({});
 
 export const presetSettings: Record<Exclude<GameSettings['preset'], 'custom'>, GameSettings> = {
   classic: settingsSchema.parse({ preset: 'classic' }),
-  online: settingsSchema.parse({ preset: 'online', clueMode: 'typed', discussionChat: true, rapidSeconds: 45 }),
-  party: settingsSchema.parse({ preset: 'party', targetScore: 7, showIcebreakers: true, secretReactions: true, defenceSeconds: 20 }),
+  online: settingsSchema.parse({ preset: 'online', boardEnabled: true, boardSize: 5, clueMode: 'typed', discussionChat: true, rapidSeconds: 45 }),
+  party: settingsSchema.parse({ preset: 'party', boardEnabled: true, boardSize: 6, targetScore: 7, showIcebreakers: true, secretReactions: true, defenceSeconds: 20 }),
   quick: settingsSchema.parse({ preset: 'quick', targetScore: 3, discussionSeconds: 30, votingSeconds: 15, guessSeconds: 15, rapidSeconds: 20 }),
-  'big-group': settingsSchema.parse({ preset: 'big-group', discussionSeconds: 90, votingSeconds: 45, confidenceVoting: true, voteReveal: 'anonymous' }),
-  family: settingsSchema.parse({ preset: 'family', familyFriendly: true, contentLevel: 'family', wordDifficulty: 'easy', targetScore: 5 }),
-  chaos: settingsSchema.parse({ preset: 'chaos', chaosMode: true, chaosIntensity: 'wild', secretReactions: true, defenceSeconds: 15, voteReveal: 'incremental' }),
-  sweaty: settingsSchema.parse({ preset: 'sweaty', wordDifficulty: 'hard', discussionSeconds: 120, confidenceVoting: true, defenceSeconds: 30, allowRevote: true, targetScore: 10 })
+  'big-group': settingsSchema.parse({ preset: 'big-group', boardEnabled: true, boardSize: 7, discussionSeconds: 90, votingSeconds: 45, confidenceVoting: true, voteReveal: 'anonymous' }),
+  family: settingsSchema.parse({ preset: 'family', boardEnabled: true, boardSize: 5, familyFriendly: true, contentLevel: 'family', wordDifficulty: 'easy', targetScore: 5 }),
+  chaos: settingsSchema.parse({ preset: 'chaos', boardEnabled: true, boardSize: 6, chaosMode: true, chaosIntensity: 'wild', secretReactions: true, defenceSeconds: 15, voteReveal: 'incremental' }),
+  sweaty: settingsSchema.parse({ preset: 'sweaty', boardEnabled: true, boardSize: 6, wordDifficulty: 'hard', discussionSeconds: 120, confidenceVoting: true, defenceSeconds: 30, allowRevote: true, targetScore: 10 })
 };
 
 export function settingsForPreset(preset: GameSettings['preset']): GameSettings {
@@ -135,6 +137,7 @@ export type PublicPlayer = {
   afk?: boolean;
   autopilot?: boolean;
   personality?: BotPersonality;
+  display?: boolean;
 };
 
 export const drawingPointSchema = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]);
@@ -161,6 +164,8 @@ export type ChatMessage = {
   bot?: boolean;
 };
 
+export type PublicBoardWord = { id: string; display: string };
+
 export type PublicRoomState = {
   code: string;
   stage: GameStage;
@@ -169,6 +174,7 @@ export type PublicRoomState = {
   settings: GameSettings;
   turnOrder: string[];
   currentTurn: number;
+  board: PublicBoardWord[];
   readyCount: number;
   eligibleReadyCount: number;
   voteCount: number;

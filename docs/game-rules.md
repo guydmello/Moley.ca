@@ -6,6 +6,8 @@ Find the Mole without revealing the secret word they are trying to infer.
 
 Most players see the same word. One or more Moles see only their role and, when enabled, the category and fellow Moles. In random order, every player gives one clue. The group discusses suspicious clues and each player secretly votes for one suspect.
 
+When Board Play is enabled, every player, spectator, reconnect, and TV display sees one authoritative 5×5 through 10×10 candidate board. It contains the secret word and normalized-unique decoys. The board is public; the innocent’s private reveal identifies which board word is secret.
+
 With multiple Moles, the top N vote-getters are accused, where N is the number of Moles. A tie at the cutoff is resolved by server-secure randomness; the coin/wheel animation only presents the already-decided result.
 
 ## Scoring
@@ -25,8 +27,11 @@ Do not say the word, spell it, use an obvious variation, or show another person 
 
 ## Alternate play
 
-Pass-the-phone keeps every role and vote behind a neutral handoff screen on one device. TV display mode shows join information, public stages, timers, results, and scores while never receiving roles, the unrevealed word, or individual votes.
-# Optional 2.4 rules
+Pass the Phone keeps every role, vote, and caught-Mole final guess behind a neutral handoff screen on one device. Local TV Display can be opened, reloaded, closed, or reattached during a match; it shows the public board, stages, clues, vote progress, results, and scores while never receiving roles, the unrevealed word, individual votes, bot reasoning, or the local save. Online TV is likewise a dedicated read-only participant, not an ordinary spectator with controls.
+
+The clue order is newly randomized each round. The fairness rule softly avoids repeatedly choosing the same first player and prevents an identical whole-roster order, but it is not a predictable rotation.
+
+# Optional advanced rules
 
 Classic still uses spoken clues, immediate accusation, no defence/revote, all-at-once vote reveal and the original scoring below. Hosts can deliberately choose other presets or advanced rules:
 

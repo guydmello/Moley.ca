@@ -1,6 +1,6 @@
 {
   "name": "@moley/web",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,9 +10,9 @@
     "typecheck": "tsc -p tsconfig.app.json"
   },
   "dependencies": {
-    "@moley/game-core": "2.6.0",
-    "@moley/shared": "2.6.0",
-    "@moley/word-packs": "2.6.0",
+    "@moley/game-core": "2.7.0",
+    "@moley/shared": "2.7.0",
+    "@moley/word-packs": "2.7.0",
     "@tailwindcss/vite": "latest",
     "lucide-react": "latest",
     "motion": "latest",

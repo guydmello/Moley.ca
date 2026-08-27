@@ -7,6 +7,7 @@ Local Play is a first-class, device-only mode. After one successful production l
 Works offline:
 
 - Pass the Phone, Shared Screen, and Local Party Board
+- Local TV Display through a same-origin window, including attach/reload/detach/reopen while offline
 - humans plus deterministic bots
 - 5×5 through 10×10 boards
 - built-in and device-only custom packs
@@ -21,11 +22,13 @@ Requires online:
 
 ## Persistence and recovery
 
-The active local session is persisted after every game transition. IndexedDB is primary; an encoded localStorage write-ahead record protects refreshes that occur before an asynchronous IndexedDB commit finishes. The newest valid record wins during recovery.
+The active local session is persisted after every game transition. IndexedDB is primary; an encoded localStorage write-ahead record protects refreshes that occur before an asynchronous IndexedDB commit finishes. The newest valid record wins during recovery. Schema-1 sessions migrate to schema 2 while preserving the private word, roles, board, and order; unsupported or structurally damaged saves fail closed.
 
 The home and Local Play routes offer `Resume Local Game` or `Start New Game`. Invalid records produce `Recover What We Can` and `Start Fresh`; the recovery path retains recognizable player names but discards roles, words, votes, and scores rather than guessing at damaged private state.
 
-Role reveal and vote-ready visibility are deliberately not stored. Navigation and reload return to neutral handoff screens.
+Role, vote, and final-guess reveal visibility are deliberately not stored. Navigation, page hiding, and reload return to neutral handoff screens.
+
+The Local TV window receives an allowlisted `LocalPublicDisplayState`, never the authority save. BroadcastChannel provides live same-origin updates and a session-scoped public localStorage snapshot supports reload/storage-event recovery. Starting fresh removes that public snapshot.
 
 ## Deterministic bots
 
@@ -42,5 +45,7 @@ Local handoff screens prevent casual shoulder-surfing and browser-history disclo
 - `packages/game-core/src/local.test.ts`: order membership/fairness/restoration, semantic and unique bot clues, every board size, and 50 consecutive 10×10 rounds with 10 bots.
 - `packages/word-packs/src/index.test.ts`: bot-enabled metadata minimum and normalized clue uniqueness.
 - `tests/e2e/offline.spec.ts`: production service-worker precache, network disabled, complete multi-round match, two refresh/resume points, order restoration, rematch, no API resources, and Back/Forward privacy.
+- `tests/e2e/local-tv.spec.ts`: public-only raw snapshot plus attach, reload, detach, and reopen behaviour.
+- `tests/e2e/local-devices.spec.ts`: every 5×5–10×10 board on phone/laptop/TV and the complete required 14-viewport matrix.
 
 The browser test uses Chromium's real offline context rather than mocking an API error.

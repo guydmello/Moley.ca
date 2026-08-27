@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { APP_VERSION, PROTOCOL_VERSION, type ClientEvent, type PrivateState, type PublicRoomState, type RuntimeConfig, type ServerEnvelope } from '@moley/shared';
 
 type Connection = 'connected' | 'reconnecting' | 'offline';
-type Session = { code: string; playerId: string; token: string };
+type Session = { code: string; playerId: string; token: string; storageId?: string };
 type WithoutEnvelope<T> = T extends unknown ? Omit<T, 'v' | 'id' | 'seq'> : never;
 type OutgoingEvent = WithoutEnvelope<ClientEvent>;
 type GameStore = {
@@ -39,7 +39,7 @@ export const useGame = create<GameStore>((set, get) => ({
     intentionalClose = false;
     lastServerSeq = -1;
     set({ session, connection: navigator.onLine ? 'reconnecting' : 'offline', error: null, updateRequired: false });
-    localStorage.setItem(keyFor(session.code), JSON.stringify(session));
+    localStorage.setItem(keyFor(session.storageId ?? session.code), JSON.stringify(session));
     openSocket(session, set, get);
   },
   disconnect() {
@@ -68,7 +68,7 @@ export const useGame = create<GameStore>((set, get) => ({
 function openSocket(session: Session, set: (value: Partial<GameStore>) => void, get: () => GameStore): void {
   if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) { socket.onclose = null; socket.close(); }
   const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const query = new URLSearchParams({ token: session.token, clientVersion: APP_VERSION, protocol: String(PROTOCOL_VERSION) });
+  const query = new URLSearchParams({ clientVersion: APP_VERSION, protocol: String(PROTOCOL_VERSION) });
   const connection = new WebSocket(`${scheme}//${location.host}/api/rooms/${session.code}/connect?${query}`, [`moley.v${PROTOCOL_VERSION}`, `session.${session.token}`]);
   socket = connection;
   connection.onopen = () => {
@@ -121,7 +121,7 @@ export function restoreSession(code: string): Session | null {
   try {
     const value = JSON.parse(localStorage.getItem(keyFor(code)) ?? 'null') as Partial<Session> | null;
     return value && typeof value.code === 'string' && typeof value.playerId === 'string' && typeof value.token === 'string' && value.token.length >= 20
-      ? { code: value.code, playerId: value.playerId, token: value.token }
+      ? { code: value.code, playerId: value.playerId, token: value.token, storageId: code === value.code ? undefined : code }
       : null;
   } catch { return null; }
 }

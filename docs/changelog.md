@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.7.0 — 2026-08-27
+
+- Unified online and offline gameplay around one normalized board builder, catalog filter, fair turn-order policy, Classic scoring engine, mandatory Mole-guess rules, and deterministic bot helpers.
+- Added server-authoritative online Board Play from 5×5 through 10×10 with one canonical board shared across players, reconnects, spectators, and TV Display.
+- Added a true Local TV Display with an allowlisted public projection, BroadcastChannel plus storage-event recovery, mid-match attach/reload/detach/reopen support, large-screen layouts, and stale-host status.
+- Added explicit Private / Pass / Public local visibility, including neutral vote and final-Mole-guess handoffs and Back/Forward/page-hide privacy resets.
+- Added schema-2 local saves with v1 migration, deep state/configuration validation, corruption fail-closed behavior, and preserved private board/order state during valid upgrades.
+- Improved online and local bots with coordinated unique clue memory, curated fallback secrets for custom-only setups, shared discussion reasoning, and a Mole candidate/guess API that cannot receive the answer.
+- Added fair online round ordering with exact-repeat prevention, fixed restart Mole-history accounting, protected mandatory final guesses from host skipping, and made WebSocket mutations rollback atomically on rejected actions.
+- Added an explicit read-only online display capability, separate display-session persistence, roster exclusion, minimal private envelopes, and removed reconnect tokens from WebSocket URLs.
+- Removed the duplicate legacy PassThePhone engine, standardized Local Party / TV Display / Host Controls language, expanded How to Play guidance, and added local sound/haptic controls.
+- Expanded unit, protocol, privacy, accessibility, offline, cross-browser, local-TV, exact device, and every-board-size coverage; added 300 production-board samples and retained the 50-round bot-heavy offline stress test.
+
 ## 2.6.0 — 2026-08-27
 
 - Promoted Local Play to a primary home-screen mode with Local Classic, Local + Bots, Pass the Phone, Big Screen Party, and Offline Cottage presets.

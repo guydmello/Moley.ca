@@ -7,6 +7,7 @@ Moley has two explicit authority boundaries. Online rooms remain server-authorit
 ```text
 React/PWA client
   ├── LocalGame engine → IndexedDB recovery (offline, device-only)
+  │   └── allowlisted public projection → BroadcastChannel/localStorage → Local TV
   │ HTTPS create/join + versioned WebSocket events
   ▼
 Cloudflare Worker router
@@ -26,9 +27,11 @@ The frontend is built to static assets and served by the same Worker, so product
 
 ## Local authority and offline privacy
 
-`@moley/game-core/local` owns local round setup, role assignment, randomized clue order, deterministic bot decisions, voting, scoring, and rematches. It reuses the same mole assignment, scoring, normalization, vote reasoning, and word metadata as online rooms. The Local Play React route does not initialize runtime configuration, create a WebSocket, call Workers AI, or use a room API.
+`@moley/game-core/local` owns local round setup, role assignment, randomized clue order, deterministic bot decisions, voting, scoring, and rematches. It reuses the canonical board builder, catalog filtering, Mole guess, scoring, fair turn ordering, bot discussion, normalization, vote reasoning, and word metadata used by online rooms. The Local Play React route does not initialize runtime configuration, create a WebSocket, call Workers AI, or use a room API.
 
-Active state is stored in IndexedDB after every transition. An encoded localStorage write-ahead copy closes the small gap while an IndexedDB transaction is committing; recovery chooses the newest valid copy. Private role visibility is UI-only state and is never persisted, so reload, Back, Forward, and orientation remounts return to a neutral handoff screen.
+Active state is stored in IndexedDB after every transition. An encoded localStorage write-ahead copy closes the small gap while an IndexedDB transaction is committing; recovery chooses the newest valid copy. Schema-1 saves migrate to schema 2; damaged identities, unsupported versions, or structurally invalid private state fail closed. Private role/vote/guess visibility is UI-only state and is never persisted, so reload, Back, Forward, page hiding, and orientation remounts return to a neutral handoff screen.
+
+Local TV is not a second authority. `toLocalPublicDisplay()` creates a strict allowlisted projection, publishes it through a session-scoped BroadcastChannel and localStorage fallback, and validates it again in the display window. The display can attach, reload, detach, and reopen mid-match without receiving the local authority object.
 
 This provides practical party-game privacy, not cryptographic isolation from the device owner. A technically sophisticated person with physical access and developer tools can inspect device storage. Local saves never leave the device unless the user exports their own custom word list.
 
@@ -40,9 +43,9 @@ Creating or joining returns a random private reconnect token. The browser stores
 
 ## Canonical state
 
-`GameRoom` persists a single allowlisted room snapshot in SQLite-backed Durable Object storage. Every mutation runs through the object’s serialized event loop. The state contains players, match settings, current stage, round secret, roles, clue order, votes, bot minds, scores, timers, processed message IDs, and reconnect metadata.
+`GameRoom` persists a single allowlisted room snapshot in SQLite-backed Durable Object storage. Every mutation runs through the object’s serialized event loop. The state contains players, match settings, current stage, canonical board, round secret, roles, clue order and recent first-player history, votes, bot minds/clue memory, scores, timers, processed message IDs, and reconnect metadata.
 
-Public and private serialization are separate. Public state exposes only roster/presence, stage, permitted clues, aggregate readiness/vote progress, public timers, and revealed results. A private envelope adds only the receiving participant’s role, their word if innocent, known fellow Moles when enabled, their submissions, and host capability. Spectators never receive role or word data.
+Public and private serialization are separate. Public state exposes only roster/presence, stage, the canonical public candidate board, permitted clues, aggregate readiness/vote progress, public timers, and revealed results. A private envelope adds only the receiving participant’s role, their word if innocent, known fellow Moles when enabled, their submissions, and host capability. Spectators never receive role or word data. Online TV uses an explicit read-only display capability, is omitted from the roster, receives a minimal empty-token private envelope, and stores its reconnect session separately from a player tab.
 
 ## State machine
 
@@ -50,7 +53,7 @@ Legal transitions are defined in `@moley/game-core`. Client events are validated
 
 Moley 2.4 added optional `DEFENCE`, `REVOTE`, and `ROUND_RECAP` stages. Classic has a zero-second defence and no revote, so its path remains the original simple flow. Completed round history is bounded to 24 rounds, omits vector drawing bodies, and contains only information already safe to reveal after a round.
 
-Persisted v1 snapshots are normalized against current defaults when a Durable Object wakes. Missing feature, drawing, reaction, history, notebook, prediction and AFK fields are added without invalidating reconnect tokens or active scores.
+Persisted room snapshots are normalized against current defaults when a Durable Object wakes. Missing feature, board, turn-history, display-capability, drawing, reaction, history, notebook, prediction and AFK fields are added without invalidating reconnect tokens or active scores.
 
 ## Compatibility and feature operations
 

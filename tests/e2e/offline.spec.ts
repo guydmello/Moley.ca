@@ -24,7 +24,11 @@ async function finishVoteAndRound(page: Page) {
   await page.getByRole('button', { name: /I'm Alex/i }).click();
   await page.locator('.local-vote-grid button').first().click();
   await page.getByRole('button', { name: /Reveal the vote/i }).click();
-  if (await page.getByText('ONE LAST CHANCE').isVisible().catch(() => false)) await page.locator('.local-board button').first().click();
+  if (await page.getByText('ONE LAST CHANCE').isVisible().catch(() => false)) {
+    const handoff = page.getByRole('button', { name: /I'm /i });
+    if (await handoff.isVisible().catch(() => false)) await handoff.click();
+    await page.locator('.local-board button').first().click();
+  }
   await expect(page.getByText(/ROUND \d+ COMPLETE|MATCH COMPLETE/).first()).toBeVisible();
 }
 

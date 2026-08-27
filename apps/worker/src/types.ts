@@ -6,6 +6,7 @@ export type StoredPlayer = {
   id: string;
   name: string;
   kind: PlayerKind;
+  display: boolean;
   reconnectToken: string;
   score: number;
   roundGain: number;
@@ -46,9 +47,12 @@ export type RoomState = {
   settings: GameSettings;
   players: StoredPlayer[];
   turnOrder: string[];
+  previousFirstIds: string[];
   currentTurn: number;
+  board: WordEntry[];
   word: WordEntry | null;
   usedWordIds: string[];
+  botClueMemory: Record<string, string[]>;
   moleIds: string[];
   accusedIds: string[];
   votesRevealed: Record<string, number> | null;

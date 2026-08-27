@@ -1,37 +1,65 @@
 import { expect, test } from '@playwright/test';
 
-test('local boards fit small phone, large phone landscape, tablet, laptop, and TV', async ({ browser }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'The explicit viewport matrix runs once in Chromium.');
-  const devices = [
-    { name: 'small phone portrait', width: 360, height: 640, board: 5, humansOnly: false },
-    { name: 'large phone landscape', width: 932, height: 430, board: 7, humansOnly: true },
-    { name: 'tablet portrait', width: 768, height: 1024, board: 10, humansOnly: false },
-    { name: 'laptop', width: 1440, height: 900, board: 7, humansOnly: true },
-    { name: 'TV', width: 1920, height: 1080, board: 10, humansOnly: false }
-  ];
+const VIEWPORTS = [
+  ['phone 360×800', 360, 800],
+  ['phone 375×667', 375, 667],
+  ['phone 390×844', 390, 844],
+  ['phone 412×915', 412, 915],
+  ['phone 430×932', 430, 932],
+  ['tablet portrait', 768, 1024],
+  ['tablet landscape', 1024, 768],
+  ['laptop 1280×720', 1280, 720],
+  ['laptop 1366×768', 1366, 768],
+  ['laptop 1440×900', 1440, 900],
+  ['desktop 1920×1080', 1920, 1080],
+  ['desktop 2560×1440', 2560, 1440],
+  ['TV 1920×1080', 1920, 1080],
+  ['TV 3840×2160', 3840, 2160]
+] as const;
 
-  for (const device of devices) {
-    const context = await browser.newContext({ viewport: { width: device.width, height: device.height } });
+test('required phone, tablet, laptop, desktop, and TV viewports remain usable', async ({ browser }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The explicit viewport matrix runs once in Chromium.');
+  for (const [name, width, height] of VIEWPORTS) {
+    const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
     await page.goto('/local');
-    await page.getByPlaceholder('Player 1').fill('Alex');
-    if (device.humansOnly) {
-      await page.getByPlaceholder('Player 2').fill('Sam');
-      await page.getByPlaceholder('Player 3').fill('Jordan');
-      await page.getByPlaceholder('Player 4').fill('Riley');
-    } else {
+    await expect(page.getByRole('heading', { name: 'Play Moley locally.' }), name).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), `${name} horizontal overflow`).toBeLessThanOrEqual(1);
+    const start = page.getByRole('button', { name: /Add one human|Add .* more|Start Local Game/i });
+    await expect(start, `${name} primary setup action`).toBeVisible();
+    await context.close();
+  }
+});
+
+test('every 5×5 through 10×10 board fits phone, laptop, and TV form factors', async ({ browser }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The explicit board matrix runs once in Chromium.');
+  const formFactors = [
+    { name: 'phone', width: 390, height: 844 },
+    { name: 'laptop', width: 1440, height: 900 },
+    { name: 'TV', width: 1920, height: 1080 }
+  ];
+
+  for (const form of formFactors) {
+    for (const board of [5, 6, 7, 8, 9, 10]) {
+      const context = await browser.newContext({ viewport: { width: form.width, height: form.height } });
+      const page = await context.newPage();
+      await page.goto('/local');
+      await page.getByPlaceholder('Player 1').fill('Alex');
       for (let index = 0; index < 3; index++) await page.getByRole('button', { name: 'Add bot' }).click();
-    }
-    await page.getByLabel('Board size').selectOption(String(device.board));
-    await page.getByRole('button', { name: /Start game/i }).click();
-    const roleCount = device.humansOnly ? 4 : 1;
-    for (let role = 0; role < roleCount; role++) {
+      await page.getByLabel('Board size').selectOption(String(board));
+      await page.getByRole('button', { name: /Start game/i }).click();
       await page.getByRole('button', { name: /reveal privately/i }).click();
       await page.getByRole('button', { name: /Hide & pass on/i }).click();
+      const cells = page.locator('.shared-word-board span');
+      await expect(cells, `${form.name} ${board}×${board}`).toHaveCount(board ** 2);
+      const metrics = await page.locator('.shared-word-board').evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return { right: bounds.right, left: bounds.left, viewport: innerWidth, pageWidth: document.documentElement.scrollWidth };
+      });
+      expect(metrics.left, `${form.name} ${board}×${board} left edge`).toBeGreaterThanOrEqual(-1);
+      expect(metrics.right, `${form.name} ${board}×${board} right edge`).toBeLessThanOrEqual(metrics.viewport + 1);
+      expect(metrics.pageWidth, `${form.name} ${board}×${board} page width`).toBeLessThanOrEqual(metrics.viewport + 1);
+      await context.close();
     }
-    await expect(page.locator('.local-board span'), device.name).toHaveCount(device.board ** 2);
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
-    expect(overflow, `${device.name} horizontal overflow`).toBeLessThanOrEqual(1);
-    await context.close();
   }
 });

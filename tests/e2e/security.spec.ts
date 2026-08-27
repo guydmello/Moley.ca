@@ -3,16 +3,16 @@ import { APP_VERSION, PROTOCOL_VERSION, type ServerEnvelope } from '@moley/share
 
 type Session = { code: string; playerId: string; sessionToken: string };
 
-async function create(request: APIRequestContext, name: string): Promise<Session> {
+async function create(request: APIRequestContext, name: string, settings: Record<string, unknown> = { preset: 'custom', clueMode: 'typed', customWords: ['TOPSECRET'], targetScore: 3 }): Promise<Session> {
   const response = await request.post('/api/rooms', {
-    data: { name, settings: { preset: 'custom', clueMode: 'typed', customWords: ['TOPSECRET'], targetScore: 3 } }
+    data: { name, settings }
   });
   expect(response.status()).toBe(201);
   return response.json() as Promise<Session>;
 }
 
-async function join(request: APIRequestContext, code: string, name: string, spectator = false): Promise<Session> {
-  const response = await request.post(`/api/rooms/${code}/join`, { data: { name, spectator } });
+async function join(request: APIRequestContext, code: string, name: string, spectator = false, display = false): Promise<Session> {
+  const response = await request.post(`/api/rooms/${code}/join`, { data: { name, spectator, display } });
   expect(response.status()).toBe(201);
   return response.json() as Promise<Session>;
 }
@@ -73,9 +73,15 @@ test('server blocks host escalation, stale events, and custom-word projection le
   const hostSession = await create(request, 'Host');
   const playerSessions = await Promise.all(['Alex', 'Sam', 'Riley'].map((name) => join(request, hostSession.code, name)));
   const spectatorSession = await join(request, hostSession.code, 'Audience', true);
-  const sessions = [hostSession, ...playerSessions, spectatorSession];
+  const displaySession = await join(request, hostSession.code, 'Public TV', true, true);
+  const sessions = [hostSession, ...playerSessions, spectatorSession, displaySession];
   const clients = await Promise.all(sessions.map((session) => LiveClient.open(baseURL!, session)));
-  const [host, player, second, third, spectator] = clients;
+  const [host, player, second, third, spectator, display] = clients;
+
+  expect(display!.latestSnapshot()?.private).toMatchObject({ role: 'spectator', secretWord: null, sessionToken: '', canHost: false, hostSettings: null });
+  expect(display!.latestSnapshot()?.public?.players.some((candidate) => candidate.id === displaySession.playerId || candidate.name === 'Public TV')).toBe(false);
+  display!.send('send_chat', { text: 'A TV must not chat' });
+  await display!.waitFor((event) => event.type === 'error' && /read-only/.test(event.message ?? ''));
 
   player!.send('host_add_bot');
   const unauthorized = await player!.waitFor((event) => event.type === 'error' && /Only the current host/.test(event.message ?? ''));
@@ -104,6 +110,9 @@ test('server blocks host escalation, stale events, and custom-word projection le
   expect(innocent?.private?.secretWord).toBe('TOPSECRET');
   expect(spectator!.latestSnapshot()?.private?.secretWord).toBeNull();
   expect(JSON.stringify(spectator!.latestSnapshot())).not.toContain('TOPSECRET');
+  expect(display!.latestSnapshot()?.private?.secretWord).toBeNull();
+  expect(JSON.stringify(display!.latestSnapshot())).not.toContain('TOPSECRET');
+  expect(JSON.stringify(display!.latestSnapshot())).not.toContain(displaySession.sessionToken);
   for (const snapshot of snapshots) expect(snapshot.public?.settings.customWords).toEqual([]);
 
   while (host!.latestSnapshot()?.public?.stage === 'CLUE_TURN') {
@@ -159,4 +168,38 @@ test('invalid reconnect credentials cannot open a room socket', async ({ request
   });
   expect(result).toBe('rejected');
   socket.close();
+});
+
+test('audience actions remain private and role-scoped before round reveal', async ({ request, baseURL }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Protocol audience scenario only needs one browser project.');
+  const hostSession = await create(request, 'Audience Host', {
+    preset: 'custom', clueMode: 'spoken', boardEnabled: true, boardSize: 5,
+    spectatorPredictions: true, audienceReactions: true, discussionSeconds: 0, votingSeconds: 0
+  });
+  const playerSessions = await Promise.all(['Avery', 'Blair', 'Casey'].map((name) => join(request, hostSession.code, name)));
+  const spectatorSession = await join(request, hostSession.code, 'Audience Member', true);
+  const [host, first, second, third, spectator] = await Promise.all(
+    [hostSession, ...playerSessions, spectatorSession].map((session) => LiveClient.open(baseURL!, session))
+  );
+
+  host!.send('host_start');
+  for (const client of [host, first, second, third, spectator]) await client!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'ROLE_REVEAL');
+  for (const client of [host, first, second, third]) client!.send('player_ready', { ready: true });
+  for (const client of [host, first, second, third, spectator]) await client!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'CLUE_TURN');
+
+  const targetId = host!.latestSnapshot()!.public!.players.find((player) => player.kind !== 'spectator' && player.id !== spectatorSession.playerId)!.id;
+  let after = spectator!.events.length;
+  spectator!.send('submit_prediction', { playerId: targetId });
+  await spectator!.waitForNew((event) => event.type === 'room_snapshot' && event.private?.prediction === targetId, after);
+  after = spectator!.events.length;
+  spectator!.send('send_reaction', { emoji: '🤔' });
+  const privateAudience = await spectator!.waitForNew((event) => event.type === 'room_snapshot' && event.private?.reactionsUsed.includes('🤔'), after);
+  expect(privateAudience.public?.predictionTotals).toEqual({});
+  expect(privateAudience.public?.reactions).toEqual({});
+  expect(first!.latestSnapshot()?.public?.predictionTotals).toEqual({});
+  expect(first!.latestSnapshot()?.public?.reactions).toEqual({});
+
+  first!.send('submit_prediction', { playerId: targetId });
+  await first!.waitFor((event) => event.type === 'error' && /predictions are closed/.test(event.message ?? ''));
+  [host, first, second, third, spectator].forEach((client) => client!.close());
 });

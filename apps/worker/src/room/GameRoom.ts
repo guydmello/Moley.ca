@@ -1,13 +1,15 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
-  assignMoles, autoMoleCount, botVote, findWinners, innocentBotClue, moleBotClue,
-  randomPersonality, rankVotes, resolveTie, scoreRound, shuffled, updateMoleCandidates, validateBotClue
+  assignMoles, autoMoleCount, botDiscussionLine, botVote, buildWordBoard, customWordEntries,
+  dedupeWords, filterWordCatalog, findWinners, innocentBotClue, moleBotClueFromCandidates,
+  moleBotGuess, newRoundTurnOrder, normalizeClueKey, randomPersonality, rankVotes, resolveTie, scoreRound, shuffled,
+  updateMoleCandidates, validateBotClue, validateConfiguration
 } from '@moley/game-core';
 import {
   APP_VERSION, MAX_PROTOCOL_VERSION, MAX_WEBSOCKET_MESSAGE_LENGTH, MIN_PROTOCOL_VERSION, clientEventSchema, defaultSettings, featureEnabled, normalizeGuess, normalizeName, PROTOCOL_VERSION, settingsSchema,
   type ClientEvent, type PrivateState, type PublicRoomState, type ServerEnvelope
 } from '@moley/shared';
-import { pickWord, words } from '@moley/word-packs';
+import { words } from '@moley/word-packs';
 import { BotAI } from '../ai';
 import { isAllowedOrigin, json, newId, newSecret, SlidingRateLimit, validateName } from '../security';
 import type { Env, RoomState, StoredPlayer } from '../types';
@@ -26,9 +28,12 @@ const emptyState = (): RoomState => ({
   settings: defaultSettings,
   players: [],
   turnOrder: [],
+  previousFirstIds: [],
   currentTurn: 0,
+  board: [],
   word: null,
   usedWordIds: [],
+  botClueMemory: {},
   moleIds: [],
   accusedIds: [],
   votesRevealed: null,
@@ -87,9 +92,13 @@ export class GameRoom extends DurableObject<Env> {
     if (!nameResult.ok) return json({ error: nameResult.error }, 400);
     const settings = settingsSchema.safeParse(parsed.settings ?? {});
     if (!settings.success) return json({ error: 'One of those game settings needs another look.' }, 400);
+    const custom = featureEnabled(this.room.featureFlags, 'customPacks') ? customWordEntries(settings.data.customWords, 'room-custom') : [];
+    const availableWords = dedupeWords([...filterWordCatalog(words, settings.data), ...filterWordCatalog(custom, settings.data)]);
+    const review = validateConfiguration(settings.data, { availableWords, fallbackBotWords: words, botCount: 0, offline: false });
+    if (review.errors.length) return json({ error: review.errors[0] }, 400);
     const now = Date.now();
     const host: StoredPlayer = {
-      id: newId('player'), name: nameResult.name, kind: 'human', reconnectToken: newSecret(),
+      id: newId('player'), name: nameResult.name, kind: 'human', display: false, reconnectToken: newSecret(),
       score: 0, roundGain: 0, host: true, connected: false, joinedAt: now, lastSeen: now,
       reservedUntil: null, ready: false, role: null, moleRounds: [], clue: null,
       clueRevealed: false, clueSkipped: false, vote: null, guess: null
@@ -105,9 +114,10 @@ export class GameRoom extends DurableObject<Env> {
     if (!this.room.initialized) return json({ error: 'We could not find that room. Check the code and try again.' }, 404);
     if (this.env.LOAD_TEST !== 'true' && !this.rate.allow(`join:${networkKey}`, 120, 60_000)) return json({ error: 'This room is receiving too many join attempts. Please wait a moment.' }, 429);
     const parsed = (body && typeof body === 'object') ? body as Record<string, unknown> : {};
+    const requestedDisplay = parsed.display === true;
     const requestedSpectator = parsed.spectator === true;
-    const queuedForNextRound = !requestedSpectator && this.room.stage !== 'ROOM_LOBBY' && this.room.settings.lateJoin !== 'block';
-    const asSpectator = requestedSpectator || queuedForNextRound;
+    const queuedForNextRound = !requestedDisplay && !requestedSpectator && this.room.stage !== 'ROOM_LOBBY' && this.room.settings.lateJoin !== 'block';
+    const asSpectator = requestedDisplay || requestedSpectator || queuedForNextRound;
     if (this.room.settings.locked) return json({ error: 'This room is locked right now.' }, 423);
     if (this.room.stage !== 'ROOM_LOBBY' && this.room.settings.lateJoin === 'block' && !asSpectator) return json({ error: 'This match has already started.' }, 409);
     if (!asSpectator && this.activeSeats().length >= 100) return json({ error: 'This room already has the maximum 100 players.' }, 409);
@@ -116,7 +126,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!nameResult.ok) return json({ error: nameResult.error }, 400);
     const now = Date.now();
     const player: StoredPlayer = {
-      id: newId(asSpectator ? 'spectator' : 'player'), name: nameResult.name, kind: asSpectator ? 'spectator' : 'human', reconnectToken: newSecret(),
+      id: newId(requestedDisplay ? 'display' : asSpectator ? 'spectator' : 'player'), name: nameResult.name, kind: asSpectator ? 'spectator' : 'human', display: requestedDisplay, reconnectToken: newSecret(),
       score: 0, roundGain: 0, host: false, connected: false, joinedAt: now, lastSeen: now,
       reservedUntil: null, ready: false, role: asSpectator ? 'spectator' : null, moleRounds: [],
       clue: null, clueRevealed: false, clueSkipped: false, vote: null, guess: null, queuedForNextRound
@@ -124,7 +134,7 @@ export class GameRoom extends DurableObject<Env> {
     };
     this.room.players.push(player);
     await this.persist();
-    this.broadcast(`${player.name} joined the room.`);
+    this.broadcast(requestedDisplay ? undefined : `${player.name} joined the room.`);
     return json({ code: this.room.code, playerId: player.id, sessionToken: player.reconnectToken, spectator: asSpectator, snapshot: this.snapshot(player) }, 201);
   }
 
@@ -155,7 +165,7 @@ export class GameRoom extends DurableObject<Env> {
     player.reservedUntil = null;
     this.ctx.waitUntil(this.persist());
     this.send(server, player);
-    this.broadcast(`${player.name} is connected.`);
+    this.broadcast(player.display ? undefined : `${player.name} is connected.`);
     return new Response(null, { status: 101, webSocket: client, headers: { 'Sec-WebSocket-Protocol': `moley.v${PROTOCOL_VERSION}` } });
   }
 
@@ -167,12 +177,15 @@ export class GameRoom extends DurableObject<Env> {
       featureFlags: runtimeFeatures(this.env),
       players: (raw.players ?? []).map((player) => ({
         ...player,
+        display: player.display ?? false,
         clueDrawing: player.clueDrawing ?? null,
         note: player.note ?? '', voteConfidence: player.voteConfidence ?? null,
         prediction: player.prediction ?? null, reactionsUsed: player.reactionsUsed ?? [],
         afk: player.afk ?? false, autopilot: player.autopilot ?? false
       })),
       voteRevealItems: raw.voteRevealItems ?? [], reactions: raw.reactions ?? {},
+      board: raw.board ?? [], previousFirstIds: raw.previousFirstIds ?? [],
+      botClueMemory: raw.botClueMemory ?? {},
       history: (raw.history ?? []).slice(-24), chaosModifier: raw.chaosModifier ?? null,
       revoteUsed: raw.revoteUsed ?? false
       ,crowdWords: raw.crowdWords ?? []
@@ -202,11 +215,13 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (this.room.processedEvents.includes(event.id)) { this.send(socket, player); return; }
     this.room.processedEvents = [...this.room.processedEvents.slice(-499), event.id];
+    const before = structuredClone(this.room);
     try {
       await this.handleEvent(player, event);
       await this.persist();
       this.broadcast();
     } catch (error) {
+      this.room = before;
       this.error(socket, error instanceof Error ? error.message : 'Moley hit a wall in the tunnel. Try again.');
     }
   }
@@ -224,7 +239,7 @@ export class GameRoom extends DurableObject<Env> {
     player.reservedUntil = Date.now() + 120_000;
     await this.persist();
     await this.scheduleAt(Date.now() + (player.host ? 10_000 : 120_000));
-    this.broadcast(`${player.name} disconnected.`);
+    this.broadcast(player.display ? undefined : `${player.name} disconnected.`);
   }
 
   async webSocketError(socket: WebSocket): Promise<void> { await this.webSocketClose(socket); }
@@ -248,6 +263,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async handleEvent(player: StoredPlayer, event: ClientEvent): Promise<void> {
+    if (player.display) throw new Error('Public displays are read-only.');
     if (event.type === 'send_chat') {
       if (!this.rate.allow(`chat:${player.id}`, 8, 10_000)) throw new Error('Chat is moving too quickly. Try again in a moment.');
       if (!featureEnabled(this.room.featureFlags, 'chat') || !this.room.settings.discussionChat || !['DISCUSSION', 'ROOM_LOBBY'].includes(this.room.stage)) throw new Error('Chat is closed during this part of the game.');
@@ -361,28 +377,37 @@ export class GameRoom extends DurableObject<Env> {
   private async startRound(restart = false): Promise<void> {
     if (!restart && !['ROOM_LOBBY', 'SCOREBOARD'].includes(this.room.stage)) throw new Error('The current round needs to finish first.');
     if (restart && ['ROOM_LOBBY', 'SCOREBOARD', 'MATCH_COMPLETE'].includes(this.room.stage)) throw new Error('There is no active round to restart.');
-    for (const player of this.room.players) if (player.queuedForNextRound) { player.kind = 'human'; player.role = null; player.queuedForNextRound = false; }
+    if (restart) for (const player of this.room.players) player.moleRounds = player.moleRounds.filter((round) => round !== this.room.roundNumber);
+    if (!restart) for (const player of this.room.players) if (player.queuedForNextRound) { player.kind = 'human'; player.role = null; player.queuedForNextRound = false; }
     const seats = this.activeSeats();
     if (seats.length < 4) throw new Error('Add Bots to Start — Moley works best with at least four seats.');
     this.room.stage = 'ROUND_SETUP';
     this.room.roundNumber += restart ? 0 : 1;
-    const blacklist = new Set(this.room.settings.wordBlacklist.map(normalizeGuess));
     const suppliedWords = [...this.room.settings.customWords, ...(this.room.settings.crowdPack ? this.room.crowdWords.map((entry) => entry.word) : [])];
-    const custom = featureEnabled(this.room.featureFlags, 'customPacks')
-      ? [...new Map(suppliedWords.filter((word) => !blacklist.has(normalizeGuess(word))).map((word) => [normalizeGuess(word).replace(/s$/, ''), word])).values()]
+    const customEntries = featureEnabled(this.room.featureFlags, 'customPacks')
+      ? filterWordCatalog(customWordEntries(suppliedWords, 'room-custom'), this.room.settings)
       : [];
-    this.room.word = custom.length
-      ? (() => { const display = custom[Math.floor(secureRandom() * custom.length)]!; return { id: `custom-${display.toLocaleLowerCase('en-CA')}`, display, aliases: [], category: 'Custom Pack', difficulty: 'medium' as const, tags: ['custom'], safeBotClues: ['familiar', 'something', 'recognizable'], familySafe: true, contentLevel: 'family' as const, pack: 'custom' }; })()
-      : (() => {
-        const selected = this.room.settings.categories.length ? new Set(this.room.settings.categories) : null;
-        const recent = new Set(this.room.usedWordIds.slice(-this.room.settings.preventRecentWords));
-        const pool = words.filter((word) => (!selected || selected.has(word.category)) && !recent.has(word.id) && !blacklist.has(normalizeGuess(word.display)) && (this.room.settings.wordDifficulty === 'mixed' || word.difficulty === this.room.settings.wordDifficulty) && (this.room.settings.contentLevel !== 'family' || word.familySafe));
-        return pool.length ? pool[Math.floor(secureRandom() * pool.length)]! : pickWord(this.room.settings.categories, this.room.usedWordIds, secureRandom);
-      })();
+    const recent = new Set(this.room.usedWordIds.slice(-this.room.settings.preventRecentWords));
+    const builtInPool = filterWordCatalog(words, this.room.settings);
+    const catalog = dedupeWords([...customEntries, ...builtInPool]);
+    const hasBots = seats.some((seat) => seat.kind === 'bot' || seat.autopilot);
+    const freshBuiltIns = builtInPool.filter((word) => !recent.has(word.id));
+    const botSecrets = dedupeWords((freshBuiltIns.length ? freshBuiltIns : builtInPool).filter((word) => word.botEnabled));
+    const fallbackBotSecrets = dedupeWords(words.filter((word) => word.botEnabled && !recent.has(word.id)));
+    const secretPool = hasBots
+      ? botSecrets.length ? botSecrets : fallbackBotSecrets.length ? fallbackBotSecrets : words.filter((word) => word.botEnabled)
+      : customEntries.length ? dedupeWords(customEntries) : dedupeWords(freshBuiltIns.length ? freshBuiltIns : builtInPool);
+    if (!secretPool.length) throw new Error(hasBots
+      ? 'This setup needs an audited bot-supported word. Choose more categories or remove bots.'
+      : 'No words match this setup. Choose more categories or loosen the filters.');
+    this.room.word = secretPool[Math.floor(secureRandom() * secretPool.length)]!;
+    this.room.board = this.room.settings.boardEnabled
+      ? buildWordBoard(catalog, this.room.settings.boardSize, this.room.word, secureRandom)
+      : [];
     this.room.usedWordIds = [...this.room.usedWordIds.slice(-Math.max(199, this.room.settings.preventRecentWords)), this.room.word.id];
     const requested = this.room.settings.moleCount ?? autoMoleCount(seats.length);
     this.room.moleIds = assignMoles(seats.map((player) => ({ id: player.id, moleRounds: player.moleRounds, kind: player.kind === 'bot' ? 'bot' : 'human' })), requested, this.room.roundNumber, secureRandom);
-    this.room.turnOrder = shuffled(seats.map((player) => player.id), secureRandom);
+    this.room.turnOrder = newRoundTurnOrder(seats.map((player) => player.id), this.room.turnOrder, this.room.previousFirstIds, secureRandom);
     this.room.currentTurn = 0;
     this.room.accusedIds = [];
     this.room.votesRevealed = null;
@@ -392,11 +417,15 @@ export class GameRoom extends DurableObject<Env> {
     this.room.voteRevealItems = [];
     this.room.reactions = {};
     this.room.revoteUsed = false;
-    const modifiers = ['Reverse clue order', 'Lightning discussion', 'Double bluff', 'Silent first clue', 'Mystery category', 'Last player starts'];
+    const modifiers = ['Reverse clue order', 'Lightning discussion', ...(seats.length >= 5 ? ['Double bluff'] : []), 'Silent first clue', 'Mystery category', 'Last player starts'];
     this.room.chaosModifier = this.room.settings.chaosMode && featureEnabled(this.room.featureFlags, 'chaos') ? modifiers[Math.floor(secureRandom() * modifiers.length)]! : null;
     if (this.room.chaosModifier === 'Reverse clue order') this.room.turnOrder.reverse();
-    if (this.room.chaosModifier === 'Last player starts') this.room.turnOrder.sort((a, b) => (this.player(b)?.joinedAt ?? 0) - (this.player(a)?.joinedAt ?? 0));
+    if (this.room.chaosModifier === 'Last player starts') {
+      const lastJoined = [...seats].sort((a, b) => b.joinedAt - a.joinedAt)[0]?.id;
+      if (lastJoined) this.room.turnOrder = [lastJoined, ...this.room.turnOrder.filter((id) => id !== lastJoined)];
+    }
     if (this.room.chaosModifier === 'Double bluff') this.room.moleIds = assignMoles(seats.map((player) => ({ id: player.id, moleRounds: player.moleRounds, kind: player.kind === 'bot' ? 'bot' : 'human' })), requested + 1, this.room.roundNumber, secureRandom);
+    this.room.previousFirstIds = [...this.room.previousFirstIds.slice(-2), this.room.turnOrder[0]!];
     this.clearTimer();
     for (const player of this.room.players) {
       player.ready = player.kind === 'bot';
@@ -412,10 +441,6 @@ export class GameRoom extends DurableObject<Env> {
 
   private async beginClues(): Promise<void> {
     this.room.stage = 'CLUE_PREPARATION';
-    for (const bot of this.activeSeats().filter((player) => (player.kind === 'bot' || player.autopilot) && player.role === 'innocent')) {
-      const fallback = innocentBotClue(this.room.word!, [], bot.difficulty ?? this.room.settings.botDifficulty, secureRandom);
-      bot.clue = featureEnabled(this.room.featureFlags, 'ai') ? await this.ai.improveInnocentClue(this.room.word!, [], this.room.settings.clueMaxLength) ?? fallback : fallback;
-    }
     this.room.stage = 'CLUE_TURN';
     this.room.currentTurn = 0;
     if (this.room.chaosModifier === 'Silent first clue' && this.currentPlayer()) { this.currentPlayer()!.clueSkipped = true; this.room.currentTurn = Math.min(1, this.room.turnOrder.length - 1); }
@@ -429,9 +454,19 @@ export class GameRoom extends DurableObject<Env> {
       if (!current || (current.kind !== 'bot' && !current.autopilot)) break;
       const observed = Object.fromEntries(this.activeSeats().filter((player) => player.clueRevealed && player.clue).map((player) => [player.id, player.clue!]));
       if (current.role === 'mole') {
-        const candidates = words.filter((word) => !this.room.settings.moleKnowsCategory || word.category === this.room.word?.category);
-        current.botMind = updateMoleCandidates(current.botMind ?? { candidates: [], suspicion: {} }, Object.values(observed).join(' '), candidates);
-        current.clue = moleBotClue(current.botMind, Object.values(observed), current.difficulty ?? 'normal', secureRandom);
+        const candidates = this.moleCandidateWords();
+        let mind = current.botMind ?? { candidates: [], suspicion: {} };
+        for (const clue of Object.values(observed)) mind = updateMoleCandidates(mind, clue, candidates);
+        current.botMind = mind;
+        current.clue = moleBotClueFromCandidates(mind, Object.values(observed), candidates, Object.values(observed), current.difficulty ?? 'normal', current.personality ?? 'bluffing', secureRandom);
+      } else if (this.room.word) {
+        const used = [...Object.values(observed), ...(this.room.botClueMemory[this.room.word.id] ?? [])];
+        const fallback = innocentBotClue(this.room.word, used, current.difficulty ?? this.room.settings.botDifficulty, secureRandom, current.personality ?? 'detective');
+        const enhanced = featureEnabled(this.room.featureFlags, 'ai')
+          ? await this.ai.improveInnocentClue(this.room.word, used, this.room.settings.clueMaxLength)
+          : null;
+        current.clue = enhanced && !used.some((clue) => normalizeClueKey(clue) === normalizeClueKey(enhanced)) ? enhanced : fallback;
+        this.room.botClueMemory[this.room.word.id] = [...(this.room.botClueMemory[this.room.word.id] ?? []).slice(-47), current.clue];
       }
       current.clue = current.clue || 'familiar';
       current.clueRevealed = true;
@@ -458,10 +493,19 @@ export class GameRoom extends DurableObject<Env> {
   private enterDiscussion(): void {
     this.room.stage = 'DISCUSSION';
     this.startStageTimer(this.room.chaosModifier === 'Lightning discussion' ? Math.max(10, Math.floor(this.room.settings.discussionSeconds / 2)) : this.room.settings.discussionSeconds);
+    const seats = this.activeSeats();
+    const clues = Object.fromEntries(seats.filter((player) => player.clue).map((player) => [player.id, player.clue!]));
     const bots = this.activeSeats().filter((player) => player.kind === 'bot' && player.personality !== 'quiet').slice(0, Math.max(1, Math.floor(this.activeSeats().length / 8)));
+    const usedLines: string[] = [];
     for (const bot of bots) {
-      const suspect = this.activeSeats().find((player) => player.id !== bot.id && (!player.clue || player.clue === 'Spoken clue'));
-      if (suspect) this.room.chat.push({ id: newId('chat'), playerId: bot.id, playerName: bot.name, text: `${suspect.name}'s clue felt pretty broad.`, createdAt: Date.now(), bot: true });
+      const targetId = botVote(bot.id, seats.map((player) => player.id), clues, bot.role === 'mole' ? 'mole' : 'innocent', bot.role === 'innocent' ? this.room.word : null, bot.difficulty ?? 'normal', secureRandom);
+      const suspect = this.player(targetId);
+      if (!suspect) continue;
+      const clue = clues[targetId] ?? '';
+      const related = bot.role === 'innocent' && Boolean(this.room.word && [...this.room.word.tags, ...this.room.word.safeBotClues].some((term) => normalizeGuess(clue).includes(normalizeGuess(term))));
+      const line = botDiscussionLine(bot.name, suspect.name, clue, related, bot.personality ?? 'detective', usedLines, secureRandom);
+      usedLines.push(line);
+      this.room.chat = [...this.room.chat.slice(-99), { id: newId('chat'), playerId: bot.id, playerName: bot.name, text: line.replace(`${bot.name}: `, ''), createdAt: Date.now(), bot: true }];
     }
   }
 
@@ -511,9 +555,11 @@ export class GameRoom extends DurableObject<Env> {
     if (!caught.length) { this.finalizeRound(); return; }
     this.room.stage = 'MOLE_GUESS';
     for (const mole of caught.filter((player) => player.kind === 'bot')) {
-      const top = mole.botMind?.candidates[0]?.word;
-      const fallback = words.find((word) => word.category === (this.room.settings.moleKnowsCategory ? this.room.word?.category : undefined))?.display;
-      mole.guess = top ?? fallback ?? 'I have no idea';
+      const candidates = this.moleCandidateWords();
+      let mind = mole.botMind ?? { candidates: [], suspicion: {} };
+      for (const clue of this.activeSeats().filter((player) => player.clue).map((player) => player.clue!)) mind = updateMoleCandidates(mind, clue, candidates);
+      mole.botMind = mind;
+      mole.guess = moleBotGuess(mind, candidates, mole.difficulty ?? 'normal', secureRandom);
     }
     if (caught.every((player) => player.guess)) this.finalizeRound();
     else this.startStageTimer(this.room.settings.guessSeconds);
@@ -565,7 +611,7 @@ export class GameRoom extends DurableObject<Env> {
       case 'VOTING': await this.revealVotes(); break;
       case 'REVOTE': await this.revealVotes(); break;
       case 'DEFENCE': this.finishDefence(); break;
-      case 'MOLE_GUESS': this.finalizeRound(); break;
+      case 'MOLE_GUESS': throw new Error('The caught Mole must make a final guess before the word is revealed.');
       case 'ROUND_REVEAL': this.room.stage = 'ROUND_RECAP'; break;
       case 'ROUND_RECAP': this.room.stage = this.room.winners.length ? 'MATCH_COMPLETE' : 'SCOREBOARD'; break;
       case 'SCOREBOARD': await this.startRound(); break;
@@ -582,7 +628,10 @@ export class GameRoom extends DurableObject<Env> {
     else if (this.room.stage === 'VOTING') await this.revealVotes();
     else if (this.room.stage === 'REVOTE') await this.revealVotes();
     else if (this.room.stage === 'DEFENCE') this.finishDefence();
-    else if (this.room.stage === 'MOLE_GUESS') this.finalizeRound();
+    else if (this.room.stage === 'MOLE_GUESS') {
+      for (const mole of this.caughtMoles()) if (!mole.guess) { mole.guess = 'No guess'; mole.guessCorrect = false; }
+      this.finalizeRound();
+    }
   }
 
   private addBot(requestedName?: string, difficulty?: 'easy' | 'normal' | 'sneaky'): void {
@@ -593,7 +642,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!checked.ok) throw new Error(checked.error);
     const now = Date.now();
     this.room.players.push({
-      id: newId('bot'), name: checked.name, kind: 'bot', reconnectToken: '', score: 0, roundGain: 0,
+      id: newId('bot'), name: checked.name, kind: 'bot', display: false, reconnectToken: '', score: 0, roundGain: 0,
       host: false, connected: true, joinedAt: now, lastSeen: now, reservedUntil: null, ready: true,
       role: null, moleRounds: [], clue: null, clueRevealed: false, clueSkipped: false, vote: null,
       guess: null, difficulty: difficulty ?? this.room.settings.botDifficulty, personality: randomPersonality(secureRandom),
@@ -684,6 +733,18 @@ export class GameRoom extends DurableObject<Env> {
     if (!featureEnabled(this.room.featureFlags, 'chat')) parsed.data.discussionChat = false;
     if (!featureEnabled(this.room.featureFlags, 'chaos')) parsed.data.chaosMode = false;
     if (!featureEnabled(this.room.featureFlags, 'cosmetics')) parsed.data.roomTheme = 'classic';
+    if (parsed.data.allowRevote && parsed.data.defenceSeconds <= 0) parsed.data.allowRevote = false;
+    const custom = featureEnabled(this.room.featureFlags, 'customPacks')
+      ? customWordEntries([...parsed.data.customWords, ...(parsed.data.crowdPack ? this.room.crowdWords.map((entry) => entry.word) : [])], 'room-custom')
+      : [];
+    const availableWords = dedupeWords([...filterWordCatalog(words, parsed.data), ...filterWordCatalog(custom, parsed.data)]);
+    const review = validateConfiguration(parsed.data, {
+      availableWords,
+      fallbackBotWords: words,
+      botCount: this.activeSeats().filter((player) => player.kind === 'bot').length,
+      offline: false
+    });
+    if (review.errors.length) throw new Error(review.errors[0]);
     this.room.settings = parsed.data;
   }
 
@@ -721,6 +782,11 @@ export class GameRoom extends DurableObject<Env> {
   private readySeats(): StoredPlayer[] { return this.activeSeats().filter((player) => player.ready || !player.connected); }
   private caughtMoles(): StoredPlayer[] { return this.room.players.filter((player) => player.role === 'mole' && this.room.accusedIds.includes(player.id)); }
   private currentPlayer(): StoredPlayer | undefined { return this.player(this.room.turnOrder[this.room.currentTurn] ?? ''); }
+  private moleCandidateWords() {
+    if (this.room.settings.boardEnabled && this.room.board.length) return this.room.board;
+    const category = this.room.settings.moleKnowsCategory ? this.room.word?.category : null;
+    return dedupeWords(words.filter((word) => !category || word.category === category));
+  }
 
   private publicState(): PublicRoomState {
     const hideIndividualReady = this.room.stage === 'ROLE_REVEAL';
@@ -732,7 +798,7 @@ export class GameRoom extends DurableObject<Env> {
       code: this.room.code,
       stage: this.room.stage,
       roundNumber: this.room.roundNumber,
-      players: this.room.players.map((player) => ({
+      players: this.room.players.filter((player) => !player.display).map((player) => ({
         id: player.id, name: player.name, kind: player.kind, score: player.score, roundGain: player.roundGain,
         host: player.host, connected: player.connected, ready: hideIndividualReady ? false : player.ready,
         joinedAt: player.joinedAt,
@@ -740,11 +806,12 @@ export class GameRoom extends DurableObject<Env> {
         clueDrawing: clueVisible(player) && !this.room.settings.anonymousClues ? player.clueDrawing ?? undefined : undefined,
         clueStatus: player.clueSkipped ? 'skipped' : player.clueRevealed ? 'revealed' : player.clue ? 'submitted' : 'waiting'
         ,symbol: ['●', '▲', '■', '◆', '★', '✚', '⬟', '☀'][this.room.players.indexOf(player) % 8]
-        ,afk: player.afk, autopilot: player.autopilot, personality: player.kind === 'bot' ? player.personality : undefined
+        ,afk: player.afk, autopilot: player.autopilot, personality: player.kind === 'bot' ? player.personality : undefined, display: player.display || undefined
       })),
       settings: publicSettings(this.room.settings),
       turnOrder: this.room.turnOrder,
       currentTurn: this.room.currentTurn,
+      board: this.room.settings.boardEnabled ? this.room.board.map(({ id, display }) => ({ id, display })) : [],
       readyCount: this.readySeats().length,
       eligibleReadyCount: this.activeSeats().length,
       voteCount: this.activeSeats().filter((player) => player.vote).length,
@@ -776,6 +843,11 @@ export class GameRoom extends DurableObject<Env> {
 
   private privateState(player: StoredPlayer): PrivateState {
     const secretVisible = ['ROLE_REVEAL', 'CLUE_PREPARATION', 'CLUE_TURN', 'DISCUSSION', 'VOTING', 'VOTE_REVEAL', 'TIE_RESOLUTION', 'DEFENCE', 'REVOTE', 'ACCUSATION', 'MOLE_GUESS'].includes(this.room.stage);
+    if (player.display) return {
+      playerId: player.id, role: 'spectator', secretWord: null, fellowMoleIds: [], sessionToken: '', canHost: false,
+      submittedVote: null, submittedClue: null, mustGuess: false, judgeMoleIds: [], note: '', voteConfidence: null,
+      prediction: null, reactionsUsed: [], crowdWords: [], forbiddenClueWords: [], hostSettings: null
+    };
     return {
       playerId: player.id,
       role: secretVisible ? player.role : player.kind === 'spectator' ? 'spectator' : null,
