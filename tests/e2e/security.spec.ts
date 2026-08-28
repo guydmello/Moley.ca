@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { APP_VERSION, PROTOCOL_VERSION, type ServerEnvelope } from '@moley/shared';
+import WebSocket from 'ws';
 
 type Session = { code: string; playerId: string; sessionToken: string };
 
@@ -21,16 +22,16 @@ class LiveClient {
   readonly events: ServerEnvelope[] = [];
   private seq = 0;
   private constructor(private socket: WebSocket) {
-    socket.addEventListener('message', (message) => this.events.push(JSON.parse(String(message.data)) as ServerEnvelope));
+    socket.on('message', (message) => this.events.push(JSON.parse(String(message)) as ServerEnvelope));
   }
 
   static async open(baseURL: string, session: Session): Promise<LiveClient> {
     const url = `${baseURL.replace(/^http/, 'ws')}/api/rooms/${session.code}/connect?clientVersion=${APP_VERSION}&protocol=${PROTOCOL_VERSION}`;
-    const socket = new WebSocket(url, [`moley.v${PROTOCOL_VERSION}`, `session.${session.sessionToken}`]);
+    const socket = new WebSocket(url, [`moley.v${PROTOCOL_VERSION}`, `session.${session.sessionToken}`], { origin: new URL(baseURL).origin });
     const client = new LiveClient(socket);
     await new Promise<void>((resolve, reject) => {
-      socket.addEventListener('open', () => resolve(), { once: true });
-      socket.addEventListener('error', () => reject(new Error('WebSocket failed to open')), { once: true });
+      socket.once('open', () => resolve());
+      socket.once('error', (error) => reject(new Error(`WebSocket failed to open: ${error.message}`)));
     });
     await client.waitFor((event) => event.type === 'room_snapshot');
     return client;
@@ -68,6 +69,12 @@ class LiveClient {
   close(): void { this.socket.close(); }
 }
 
+async function openClients(baseURL: string, sessions: Session[]): Promise<LiveClient[]> {
+  const clients: LiveClient[] = [];
+  for (const session of sessions) clients.push(await LiveClient.open(baseURL, session));
+  return clients;
+}
+
 test('server blocks host escalation, stale events, and custom-word projection leaks', async ({ request, baseURL }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Protocol security scenario only needs one browser project.');
   const hostSession = await create(request, 'Host');
@@ -75,7 +82,7 @@ test('server blocks host escalation, stale events, and custom-word projection le
   const spectatorSession = await join(request, hostSession.code, 'Audience', true);
   const displaySession = await join(request, hostSession.code, 'Public TV', true, true);
   const sessions = [hostSession, ...playerSessions, spectatorSession, displaySession];
-  const clients = await Promise.all(sessions.map((session) => LiveClient.open(baseURL!, session)));
+  const clients = await openClients(baseURL!, sessions);
   const [host, player, second, third, spectator, display] = clients;
 
   expect(display!.latestSnapshot()?.private).toMatchObject({ role: 'spectator', secretWord: null, sessionToken: '', canHost: false, hostSettings: null });
@@ -160,11 +167,11 @@ test('invalid reconnect credentials cannot open a room socket', async ({ request
   test.skip(testInfo.project.name !== 'desktop', 'Protocol security scenario only needs one browser project.');
   const session = await create(request, 'Token Host');
   const url = `${baseURL!.replace(/^http/, 'ws')}/api/rooms/${session.code}/connect?clientVersion=${APP_VERSION}&protocol=${PROTOCOL_VERSION}`;
-  const socket = new WebSocket(url, [`moley.v${PROTOCOL_VERSION}`, `session.${'x'.repeat(43)}`]);
+  const socket = new WebSocket(url, [`moley.v${PROTOCOL_VERSION}`, `session.${'x'.repeat(43)}`], { origin: new URL(baseURL!).origin });
   const result = await new Promise<'open' | 'rejected'>((resolve) => {
-    socket.addEventListener('open', () => resolve('open'), { once: true });
-    socket.addEventListener('error', () => resolve('rejected'), { once: true });
-    socket.addEventListener('close', () => resolve('rejected'), { once: true });
+    socket.once('open', () => resolve('open'));
+    socket.once('error', () => resolve('rejected'));
+    socket.once('close', () => resolve('rejected'));
   });
   expect(result).toBe('rejected');
   socket.close();
@@ -178,9 +185,7 @@ test('audience actions remain private and role-scoped before round reveal', asyn
   });
   const playerSessions = await Promise.all(['Avery', 'Blair', 'Casey'].map((name) => join(request, hostSession.code, name)));
   const spectatorSession = await join(request, hostSession.code, 'Audience Member', true);
-  const [host, first, second, third, spectator] = await Promise.all(
-    [hostSession, ...playerSessions, spectatorSession].map((session) => LiveClient.open(baseURL!, session))
-  );
+  const [host, first, second, third, spectator] = await openClients(baseURL!, [hostSession, ...playerSessions, spectatorSession]);
 
   host!.send('host_start');
   for (const client of [host, first, second, third, spectator]) await client!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'ROLE_REVEAL');
