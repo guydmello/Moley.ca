@@ -9,7 +9,7 @@ import { encodePackWords } from './pack-codec';
 
 const PRESETS: GameSettings['preset'][] = ['classic', 'online', 'party', 'quick', 'big-group', 'family', 'chaos', 'sweaty', 'custom'];
 const LABELS: Partial<Record<keyof GameSettings, string>> = {
-  clueMode: 'Clue mode', guessMode: 'Mole guess', targetScore: 'Winning score', moleCount: 'Moles',
+  clueMode: 'Clue mode', requiredClueRoundsBeforeVoting: 'Clue rounds before voting', guessMode: 'Mole guess', targetScore: 'Winning score', moleCount: 'Moles',
   boardEnabled: 'Board Play', boardSize: 'Board size',
   defenceSeconds: 'Defence phase', allowRevote: 'Optional revote', anonymousClues: 'Anonymous clues',
   privateNotebook: 'Private Mole notebook', confidenceVoting: 'Confidence voting', voteReveal: 'Vote reveal',
@@ -25,7 +25,7 @@ export function FeatureSettingsDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [customText, setCustomText] = useState(editableSettings.customWords.join('\n'));
   const importRef = useRef<HTMLInputElement>(null);
-  const summary = useMemo(() => [draft.clueMode, draft.boardEnabled ? `${draft.boardSize}×${draft.boardSize} board` : null, draft.moleCount ? `${draft.moleCount} Moles` : 'Auto Moles', draft.targetScore ? `First to ${draft.targetScore}` : 'Endless', draft.defenceSeconds ? `${draft.defenceSeconds}s defence` : null, draft.chaosMode ? 'Chaos on' : null].filter(Boolean).join(' · '), [draft]);
+  const summary = useMemo(() => [draft.clueMode, `${draft.requiredClueRoundsBeforeVoting} clue round${draft.requiredClueRoundsBeforeVoting === 1 ? '' : 's'}`, draft.boardEnabled ? `${draft.boardSize}×${draft.boardSize} board` : null, draft.moleCount ? `${draft.moleCount} Moles` : 'Auto Moles', draft.targetScore ? `First to ${draft.targetScore}` : 'Endless', draft.defenceSeconds ? `${draft.defenceSeconds}s defence` : null, draft.chaosMode ? 'Chaos on' : null].filter(Boolean).join(' · '), [draft]);
   if (!room) return null;
   const update = <K extends keyof GameSettings>(key: K, value: GameSettings[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const visible = (label: string) => !query || label.toLocaleLowerCase('en-CA').includes(query.toLocaleLowerCase('en-CA'));
@@ -65,6 +65,7 @@ export function FeatureSettingsDialog({ onClose }: { onClose: () => void }) {
       {modified.length > 0 && <div className="modified-summary"><strong>Modified preset</strong><span>{modified.slice(0, 6).join(', ')}{modified.length > 6 ? ` +${modified.length - 6}` : ''}</span></div>}
       {visible('Core clue mode guess winning score moles difficulty content') && <section className="settings-section"><h3>Core game</h3><div className="settings-grid">
         <Select label="Clue mode" value={draft.clueMode} onChange={(value) => update('clueMode', value as GameSettings['clueMode'])} options={[['spoken','Spoken aloud'],['typed','Typed privately'],['emoji','Emoji only'],['drawing','Drawing canvas']].filter(([value]) => value !== 'drawing' || featureEnabled(room.featureFlags, 'drawing'))} />
+        <Select label="Clue rounds before voting" value={String(draft.requiredClueRoundsBeforeVoting)} onChange={(value) => update('requiredClueRoundsBeforeVoting', Number(value))} options={[1,2,3,4,5].map((count) => [String(count), String(count) + (count === 1 ? ' round' : ' rounds')])} />
         <Select label="Mole guess" value={draft.guessMode} onChange={(value) => update('guessMode', value as GameSettings['guessMode'])} options={[['typed','Typed privately'],['spoken','Spoken + judged']]} />
         <Select label="Winning score" value={draft.targetScore === null ? 'endless' : String(draft.targetScore)} onChange={(value) => update('targetScore', value === 'endless' ? null : Number(value))} options={[['3','3 points'],['5','5 points'],['7','7 points'],['10','10 points'],['endless','Endless']]} />
         <Select label="Moles" value={draft.moleCount === null ? 'auto' : String(draft.moleCount)} onChange={(value) => update('moleCount', value === 'auto' ? null : Number(value))} options={[['auto','Automatic'],['1','1 Mole'],['2','2 Moles'],['3','3 Moles'],['4','4 Moles']]} />

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.7.1 — 2026-08-27
+
+- Added explicit one-to-five Clue Rounds before voting across local and online authority; Classic defaults to two, Quick to one, and longer local presets to three through five.
+- Kept one randomized turn order stable inside a Game Round, persisted exact Clue Round progress, and rejected early voting in both engines and the online server.
+- Fixed caught Bot Moles bypassing Local Final Guess; human and bot guesses now lock privately, survive refresh until reveal, and gate both word reveal and idempotent scoring.
+- Added public Final Guess reveal after resolution, then clears stale private guesses, votes, notes, and bot reasoning while retaining the safe recap.
+- Consolidated the home/local experience into one Local / Offline entry with separate One Device and TV / Second Screen presentation choices.
+- Reworked Normal deterministic clue ordering to prefer medium/subtle clues, diversified semantic levels, expanded Dog metadata, and preserved clue/candidate history through every Clue Round.
+- Bumped local persistence to schema 3 and multiplayer protocol to 4 with safe migration defaults for active 2.7.0 saves and rooms.
+- Added one-to-five progression, early-vote, human/bot Final Guess, wrong-guess scoring, privacy, offline PWA, TV, reconnect, and authoritative online regression coverage.
+
 ## 2.7.0 — 2026-08-27
 
 - Unified online and offline gameplay around one normalized board builder, catalog filter, fair turn-order policy, Classic scoring engine, mandatory Mole-guess rules, and deterministic bot helpers.

@@ -28,7 +28,7 @@ test('Local TV attaches, reloads, detaches, and reconnects with public-only stat
     return key ? localStorage.getItem(key) : null;
   });
   expect(serializedPublicState).not.toBeNull();
-  for (const field of ['secretWordId', 'moleIds', 'votes', 'botMinds', 'botClueMemory']) expect(serializedPublicState).not.toContain(`"${field}"`);
+  for (const field of ['secretWordId', 'moleIds', 'votes', 'botMinds', 'botClueMemory', 'moleFinalGuess', 'clueHistory']) expect(serializedPublicState).not.toContain(`"${field}"`);
 
   await page.getByRole('button', { name: /Hide & pass on/i }).click();
   await expect(page.locator('.shared-word-board span')).toHaveCount(25);

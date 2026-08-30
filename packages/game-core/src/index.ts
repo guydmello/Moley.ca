@@ -248,6 +248,7 @@ export function scoreRound(input: ScoreInput): RoundResult {
     const value = input.guesses[id];
     return value?.correct ?? (value ? accepted.includes(normalizeGuess(value.guess)) : false);
   });
+  const moleGuesses = Object.fromEntries(caughtMoleIds.map((id) => [id, input.guesses[id]?.guess?.trim() || 'No guess']));
   const gains = Object.fromEntries(input.playerIds.map((id) => [id, 0]));
   for (const id of escapedMoleIds) gains[id] = 2;
   for (const id of correctGuessMoleIds) gains[id] = 1;
@@ -257,7 +258,7 @@ export function scoreRound(input: ScoreInput): RoundResult {
   const headline = escapedMoleIds.length
     ? escapedMoleIds.length === input.moleIds.length ? 'THE MOLE ESCAPED!' : 'A MOLE SLIPPED AWAY!'
     : correctGuessMoleIds.length ? 'THE MOLE STOLE THE WORD!' : 'YOU CAUGHT THE MOLE!';
-  return { accusedIds: input.accusedIds, moleIds: input.moleIds, caughtMoleIds, escapedMoleIds, correctGuessMoleIds, secretWord: input.word.display, gains, headline };
+  return { accusedIds: input.accusedIds, moleIds: input.moleIds, caughtMoleIds, escapedMoleIds, correctGuessMoleIds, moleGuesses, secretWord: input.word.display, gains, headline };
 }
 
 export function findWinners(scores: Record<string, number>, settings: GameSettings): string[] {
@@ -281,12 +282,21 @@ export function normalizeClueKey(value: string): string {
   return normalized.length > 4 && normalized.endsWith('s') ? normalized.slice(0, -1) : normalized;
 }
 
+function interleaveClues(...groups: string[][]): string[] {
+  const result: string[] = [];
+  const longest = Math.max(0, ...groups.map((group) => group.length));
+  for (let index = 0; index < longest; index++) for (const group of groups) if (group[index]) result.push(group[index]!);
+  return result;
+}
+
 export function innocentBotClue(word: WordEntry, usedClues: string[], difficulty: BotDifficulty, random: () => number = Math.random, personality: BotPersonality = 'detective'): string {
   const groups = word.botClues;
+  const indirectConcepts = groups ? [...groups.medium, ...groups.subtle, ...(word.relatedConcepts ?? []), ...word.tags, word.category] : [...word.safeBotClues, ...(word.relatedConcepts ?? []), ...word.tags, word.category];
+  const composite = indirectConcepts.flatMap((left, index) => indirectConcepts.slice(index + 1).map((right) => `${left} · ${right}`));
   const ordered = groups
-    ? difficulty === 'easy' || personality === 'literal' ? [...groups.direct, ...groups.medium, ...groups.subtle]
-      : difficulty === 'sneaky' || ['creative', 'cautious', 'quiet'].includes(personality) ? [...groups.subtle, ...groups.medium, ...groups.direct]
-        : [...groups.medium, ...groups.direct, ...groups.subtle]
+    ? difficulty === 'easy' ? [...interleaveClues(groups.direct, groups.medium), ...groups.subtle]
+      : difficulty === 'sneaky' || ['creative', 'cautious', 'quiet'].includes(personality) ? [...interleaveClues(groups.subtle, groups.medium), ...composite, ...groups.direct]
+        : [...interleaveClues(groups.medium, groups.subtle), ...composite, ...groups.direct]
     : word.safeBotClues;
   const used = new Set(usedClues.map(normalizeClueKey));
   const valid = ordered.filter((clue) => !used.has(normalizeClueKey(clue)) && validateBotClue(clue, word, 80));

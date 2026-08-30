@@ -41,7 +41,11 @@ test('local board and private voting have no serious automated accessibility vio
   let results = await new AxeBuilder({ page }).analyze();
   expect(results.violations.filter((violation) => ['serious', 'critical'].includes(violation.impact ?? ''))).toEqual([]);
 
-  for (let turn = 0; turn < 4; turn++) {
+  for (let turn = 0; turn < 30; turn++) {
+    const nextClueRound = page.getByRole('button', { name: /Start Clue Round/i });
+    if (await nextClueRound.isVisible().catch(() => false)) { await nextClueRound.click(); continue; }
+    const startDiscussion = page.getByRole('button', { name: 'Start Discussion' });
+    if (await startDiscussion.isVisible().catch(() => false)) { await startDiscussion.click(); break; }
     const bot = page.getByRole('button', { name: /Let .* think/i });
     if (await bot.isVisible().catch(() => false)) { await bot.click(); await page.waitForTimeout(30); }
     else { await page.getByPlaceholder('One meaningful clue…').fill(`accessible clue ${turn}`); await page.getByRole('button', { name: /Lock clue/i }).click(); }

@@ -1,5 +1,29 @@
 import { expect, test, type Page } from '@playwright/test';
 
+type SavedLocalState = {
+  stage: string;
+  players: { id: string; name: string; kind: 'human' | 'bot'; score: number; roundGain: number }[];
+  moleIds: string[];
+  votes: Record<string, string>;
+  result: null | { caughtMoleIds: string[]; correctGuessMoleIds: string[]; gains: Record<string, number> };
+  roundScored: boolean;
+};
+
+async function savedLocalState(page: Page): Promise<SavedLocalState> {
+  return page.evaluate(() => {
+    const encoded = localStorage.getItem('moley:local:recovery');
+    if (!encoded) throw new Error('Local recovery state is missing.');
+    const binary = atob(encoded);
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)))) as SavedLocalState;
+  });
+}
+
+async function playClueTurn(page: Page, clue: string) {
+  const bot = page.getByRole('button', { name: /Let .* think/i });
+  if (await bot.isVisible().catch(() => false)) { await bot.click(); await page.waitForTimeout(30); }
+  else { await page.getByPlaceholder('One meaningful clue…').fill(clue); await page.getByRole('button', { name: /Lock clue/i }).click(); }
+}
+
 async function finishRoleHandoff(page: Page) {
   await expect(page.getByRole('heading', { name: /Pass to Alex/i })).toBeVisible();
   await page.getByRole('button', { name: /reveal privately/i }).click();
@@ -8,7 +32,11 @@ async function finishRoleHandoff(page: Page) {
 }
 
 async function finishClues(page: Page) {
-  for (let turn = 0; turn < 4; turn++) {
+  for (let turn = 0; turn < 30; turn++) {
+    const nextClueRound = page.getByRole('button', { name: /Start Clue Round/i });
+    if (await nextClueRound.isVisible().catch(() => false)) { await nextClueRound.click(); continue; }
+    const startDiscussion = page.getByRole('button', { name: 'Start Discussion' });
+    if (await startDiscussion.isVisible().catch(() => false)) { await startDiscussion.click(); break; }
     const botButton = page.getByRole('button', { name: /Let .* think/i });
     if (await botButton.isVisible().catch(() => false)) { await botButton.click(); await page.waitForTimeout(30); }
     else {
@@ -24,15 +52,21 @@ async function finishVoteAndRound(page: Page) {
   await page.getByRole('button', { name: /I'm Alex/i }).click();
   await page.locator('.local-vote-grid button').first().click();
   await page.getByRole('button', { name: /Reveal the vote/i }).click();
-  if (await page.getByText('ONE LAST CHANCE').isVisible().catch(() => false)) {
-    const handoff = page.getByRole('button', { name: /I'm /i });
-    if (await handoff.isVisible().catch(() => false)) await handoff.click();
-    await page.locator('.local-board button').first().click();
+  if (await page.locator('.local-guess-private').isVisible().catch(() => false)) {
+    const botGuess = page.getByRole('button', { name: /Let .* lock a guess/i });
+    if (await botGuess.isVisible().catch(() => false)) await botGuess.click();
+    else {
+      await page.getByRole('button', { name: /I'm /i }).click();
+      await page.getByLabel('Final word guess').fill('definitely wrong');
+      await page.getByRole('button', { name: /Lock In Guess/i }).click();
+    }
+    await page.getByRole('button', { name: 'Reveal' }).click();
   }
   await expect(page.getByText(/ROUND \d+ COMPLETE|MATCH COMPLETE/).first()).toBeVisible();
 }
 
 test('cached production PWA completes, restores, and rematches a true offline local game', async ({ page, context }, testInfo) => {
+  test.setTimeout(120_000);
   test.skip(testInfo.project.name !== 'desktop', 'One production service-worker project is sufficient.');
   const productionOrigin = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8787';
   await page.goto(`${productionOrigin}/local`);
@@ -46,6 +80,7 @@ test('cached production PWA completes, restores, and rematches a true offline lo
   await page.getByPlaceholder('Player 1').fill('Alex');
   for (let index = 0; index < 3; index++) await page.getByRole('button', { name: 'Add bot' }).click();
   await page.getByLabel('First to').selectOption('3');
+  await expect(page.getByLabel('Clue rounds before voting')).toHaveValue('2');
   await page.getByLabel('Fast Bots').check();
   await page.getByRole('button', { name: /Start game/i }).click();
 
@@ -58,8 +93,8 @@ test('cached production PWA completes, restores, and rematches a true offline lo
   await page.getByRole('button', { name: /Resume Local Game/i }).click();
   await expect(page.getByText(/ROUND 1 COMPLETE|MATCH COMPLETE/).first()).toBeVisible();
 
-  for (let round = 2; round <= 6; round++) {
-    const next = page.getByRole('button', { name: /Start next round/i });
+  for (let round = 2; round <= 12; round++) {
+    const next = page.getByRole('button', { name: /Start next (?:Game )?Round/i });
     if (!await next.isVisible().catch(() => false)) break;
     await next.click();
     await finishRoleHandoff(page);
@@ -79,6 +114,88 @@ test('cached production PWA completes, restores, and rematches a true offline lo
   await finishRoleHandoff(page);
   await expect(page.getByText('ROUND 1', { exact: true })).toBeVisible();
   await expect(page.locator('.local-board span')).toHaveCount(25);
+  expect(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => entry.name.includes('/api/')))).toBe(false);
+});
+
+test('four humans and two bots complete two offline Clue Rounds and a mandatory Final Guess', async ({ page, context }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(testInfo.project.name !== 'desktop', 'The full six-seat offline acceptance path runs once in Chromium.');
+  const productionOrigin = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8787';
+  await page.goto(`${productionOrigin}/local`);
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await context.setOffline(true);
+  await page.reload();
+
+  const humans = ['Alex', 'Sam', 'Maya', 'Jordan'];
+  for (const [index, name] of humans.entries()) await page.getByPlaceholder(`Player ${index + 1}`).fill(name);
+  await page.getByRole('button', { name: 'Add bot' }).click();
+  await page.getByRole('button', { name: 'Add bot' }).click();
+  await expect(page.getByLabel('Clue rounds before voting')).toHaveValue('2');
+  await expect(page.getByLabel('First to')).toHaveValue('5');
+  await page.getByLabel('Fast Bots').check();
+  await page.getByRole('button', { name: /Start game locally/i }).click();
+
+  for (const name of humans) {
+    await expect(page.getByRole('heading', { name: `Pass to ${name}` })).toBeVisible();
+    await page.getByRole('button', { name: /reveal privately/i }).click();
+    await page.getByRole('button', { name: /Hide & pass on/i }).click();
+  }
+
+  const firstOrder = await page.locator('.local-turn-order li strong').allTextContents();
+  expect(firstOrder).toHaveLength(6);
+  for (let turn = 0; turn < 6; turn++) await playClueTurn(page, `first pass ${turn}`);
+  await expect(page.getByRole('heading', { name: 'Clue Round 1 Complete' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Start secret voting/i })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Start Clue Round 2' }).click();
+  expect(await page.locator('.local-turn-order li strong').allTextContents()).toEqual(firstOrder);
+
+  await playClueTurn(page, 'second pass resume check');
+  const nextPlayer = await page.locator('.local-phase-head h1').textContent();
+  await page.reload();
+  await page.getByRole('button', { name: /Resume Local Game/i }).click();
+  await expect(page.getByText(/CLUE ROUND 2 OF 2/)).toBeVisible();
+  await expect(page.locator('.local-phase-head h1')).toHaveText(nextPlayer ?? '');
+  expect(await page.locator('.local-turn-order li strong').allTextContents()).toEqual(firstOrder);
+  for (let turn = 1; turn < 6; turn++) await playClueTurn(page, `second pass ${turn}`);
+
+  await expect(page.getByRole('heading', { name: 'All clues are in' })).toBeVisible();
+  await page.getByRole('button', { name: 'Start Discussion' }).click();
+  await page.getByRole('button', { name: /Start secret voting/i }).click();
+  await expect.poll(async () => (await savedLocalState(page)).stage).toBe('voting');
+  const voting = await savedLocalState(page);
+  const moleId = voting.moleIds[0]!;
+  const mole = voting.players.find((player) => player.id === moleId)!;
+  const botVoteCounts = Object.values(voting.votes).reduce<Record<string, number>>((counts, target) => ({ ...counts, [target]: (counts[target] ?? 0) + 1 }), {});
+
+  for (const voterName of humans) {
+    await page.getByRole('button', { name: `I'm ${voterName}` }).click();
+    const voter = voting.players.find((player) => player.name === voterName)!;
+    const target = voter.id !== moleId
+      ? mole
+      : voting.players.filter((player) => player.id !== voter.id).sort((a, b) => (botVoteCounts[a.id] ?? 0) - (botVoteCounts[b.id] ?? 0))[0]!;
+    await page.locator('.local-vote-grid button').filter({ hasText: target.name }).click();
+  }
+
+  await page.getByRole('button', { name: /Reveal the vote/i }).click();
+  await expect(page.locator('.local-guess-private')).toBeVisible();
+  const botGuess = page.getByRole('button', { name: /Let .* lock a guess/i });
+  if (await botGuess.isVisible().catch(() => false)) await botGuess.click();
+  else {
+    await page.getByRole('button', { name: `I'm ${mole.name}` }).click();
+    await page.getByLabel('Final word guess').fill('definitely wrong');
+    await page.getByRole('button', { name: /Lock In Guess/i }).click();
+  }
+  await expect(page.getByRole('heading', { name: 'Guess Locked' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: /Resume Local Game/i }).click();
+  await expect(page.getByRole('heading', { name: 'Guess Locked' })).toBeVisible();
+  await page.getByRole('button', { name: 'Reveal' }).click();
+
+  const scored = await savedLocalState(page);
+  expect(scored.roundScored).toBe(true);
+  expect(scored.result?.caughtMoleIds).toContain(moleId);
+  if (scored.result?.correctGuessMoleIds.includes(moleId)) expect(scored.result.gains[moleId]).toBe(1);
+  else for (const player of scored.players.filter((candidate) => candidate.id !== moleId)) expect(scored.result?.gains[player.id]).toBe(2);
   expect(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => entry.name.includes('/api/')))).toBe(false);
 });
 

@@ -25,7 +25,7 @@ test('required phone, tablet, laptop, desktop, and TV viewports remain usable', 
     await page.goto('/local');
     await expect(page.getByRole('heading', { name: 'Play Moley locally.' }), name).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), `${name} horizontal overflow`).toBeLessThanOrEqual(1);
-    const start = page.getByRole('button', { name: /Add one human|Add .* more|Start Local Game/i });
+    const start = page.getByRole('button', { name: /Start game locally/i });
     await expect(start, `${name} primary setup action`).toBeVisible();
     await context.close();
   }

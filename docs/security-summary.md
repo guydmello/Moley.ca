@@ -1,7 +1,7 @@
 # Moley 2.7 security summary
 
 Audit date: 2026-08-27
-Release candidate: 2.7.0 / protocol 3
+Release candidate: 2.7.1 / protocol 4
 
 ## Result
 

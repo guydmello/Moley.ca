@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_DRAWING_POINTS, clientEventSchema, defaultFeatureFlags, drawingPayloadSchema, featureEnabled, modifiedSettingKeys, presetSettings, settingsSchema } from '@moley/shared';
+import { MAX_DRAWING_POINTS, PROTOCOL_VERSION, clientEventSchema, defaultFeatureFlags, drawingPayloadSchema, featureEnabled, modifiedSettingKeys, presetSettings, settingsSchema } from '@moley/shared';
 import { runtimeFeatures } from '../../apps/worker/src/features';
 import { decodePackWords, encodePackWords } from '../../apps/web/src/pack-codec';
 
@@ -15,7 +15,7 @@ describe('replayability release contracts', () => {
   it('validates bounded vector drawings and rejects uploads or excessive points', () => {
     const drawing = { strokes: [{ points: [[0.1, 0.2], [0.8, 0.9]], color: 'ink', width: 0.01 }] };
     expect(drawingPayloadSchema.safeParse(drawing).success).toBe(true);
-    expect(clientEventSchema.safeParse({ v: 3, id: 'event_drawing1', seq: 1, type: 'submit_drawing', drawing }).success).toBe(true);
+    expect(clientEventSchema.safeParse({ v: PROTOCOL_VERSION, id: 'event_drawing1', seq: 1, type: 'submit_drawing', drawing }).success).toBe(true);
     const oversized = { strokes: [{ points: Array.from({ length: MAX_DRAWING_POINTS + 1 }, () => [0.1, 0.1]) }] };
     expect(drawingPayloadSchema.safeParse(oversized).success).toBe(false);
   });

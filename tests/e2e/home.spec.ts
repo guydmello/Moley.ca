@@ -4,12 +4,13 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('moley:tutorial', 'done'));
 });
 
-test('landing page exposes every primary play path', async ({ page }) => {
+test('landing page exposes the unified local and online play paths', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: /Find the Mole/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Play Locally|Resume Local Game/i })).toBeVisible();
   await expect(page.getByRole('button', { name: /Create game/i }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: /Join game/i }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /Pass it around/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Pass it around/i })).toHaveCount(0);
   const desktopHow = page.getByRole('navigation').getByRole('button', { name: 'How to play' });
   if (await desktopHow.isVisible()) await desktopHow.click();
   else await page.getByRole('contentinfo').getByRole('button', { name: 'How to play' }).click();

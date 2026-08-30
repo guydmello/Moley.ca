@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { botSupportedWords, words } from '@moley/word-packs';
 import {
   advanceLocalRole, beginLocalVoting, buildLocalCatalog, createLocalGame, createLocalPlayer, fairTurnOrder,
-  finishLocalRound, innocentBotClue, localSettingsForPreset, migrateLocalState, playLocalClue,
+  finishLocalRound, innocentBotClue, localSettingsForPreset, lockLocalMoleGuess, migrateLocalState, playLocalClue,
   resolveLocalVoting, startLocalRound, submitLocalVote, toLocalPublicDisplay, validateLocalPublicDisplay, validateLocalRoster, validateLocalState
 } from './index';
 
@@ -72,10 +72,15 @@ describe('deterministic bot clues', () => {
 
   it('varies clue style by difficulty and personality', () => {
     const word = botSupportedWords.find((entry) => entry.display === 'Apple')!;
-    const easy = new Set(Array.from({ length: 12 }, (_, index) => innocentBotClue(word, [], 'easy', seeded(index + 2), 'literal')));
-    const sneaky = new Set(Array.from({ length: 12 }, (_, index) => innocentBotClue(word, [], 'sneaky', seeded(index + 40), 'creative')));
-    expect([...easy].some((clue) => word.botClues!.direct.includes(clue))).toBe(true);
-    expect([...sneaky].some((clue) => word.botClues!.subtle.includes(clue))).toBe(true);
+    expect(word.botClues!.direct).toContain(innocentBotClue(word, [], 'easy', () => 0, 'literal'));
+    expect(word.botClues!.subtle).toContain(innocentBotClue(word, [], 'sneaky', () => 0, 'creative'));
+  });
+
+  it('keeps Classic normal clues away from giveaway-level direct Dog clues', () => {
+    const dog = botSupportedWords.find((entry) => entry.display === 'Dog')!;
+    const normal = Array.from({ length: 20 }, (_, index) => innocentBotClue(dog, [], 'normal', seeded(index + 120), 'detective'));
+    expect(normal.every((clue) => !dog.botClues!.direct.includes(clue))).toBe(true);
+    expect(normal.every((clue) => [...dog.botClues!.medium, ...dog.botClues!.subtle].includes(clue))).toBe(true);
   });
 });
 
@@ -104,7 +109,11 @@ describe('complete offline local engine', () => {
       const target = state.players.find((player) => player.active && player.id !== human.id)!;
       state = submitLocalVote(state, human.id, target.id);
       state = resolveLocalVoting(state, words, random);
-      if (state.stage === 'guess') state = finishLocalRound(state, words, state.boardIds.find((id) => id !== state.secretWordId), random);
+      if (state.stage === 'guess') {
+        const mole = state.players.find((player) => state.moleIds.includes(player.id) && state.accusedIds.includes(player.id));
+        state = lockLocalMoleGuess(state, words, mole?.kind === 'human' ? 'definitely wrong' : undefined, random);
+        state = finishLocalRound(state, words);
+      }
       expect(['result', 'match-complete']).toContain(state.stage);
     }
     expect(state.roundNumber).toBe(50);
@@ -122,13 +131,19 @@ describe('complete offline local engine', () => {
 });
 
 describe('local persistence and public projection', () => {
-  it('migrates a v1 save without losing its private round, board, or order', () => {
+  it('migrates a v2 save without losing its private round, board, or order', () => {
     const state = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-bots'), seeded(81)), words, seeded(82));
     const legacy = structuredClone(state) as unknown as Record<string, unknown>;
-    legacy.schemaVersion = 1;
+    legacy.schemaVersion = 2;
     delete (legacy.settings as Record<string, unknown>).haptics;
+    delete (legacy.settings as Record<string, unknown>).requiredClueRoundsBeforeVoting;
+    delete legacy.currentClueRound;
+    delete legacy.completedClueRounds;
+    delete legacy.clueHistory;
+    delete legacy.moleFinalGuess;
+    delete legacy.roundScored;
     const migrated = migrateLocalState(legacy, words);
-    expect(migrated?.schemaVersion).toBe(2);
+    expect(migrated?.schemaVersion).toBe(3);
     expect(migrated?.settings.haptics).toBe(true);
     expect(migrated?.secretWordId).toBe(state.secretWordId);
     expect(migrated?.moleIds).toEqual(state.moleIds);
@@ -151,7 +166,7 @@ describe('local persistence and public projection', () => {
     state.votes[state.players[0]!.id] = state.players[1]!.id;
     state.botMinds[state.players[2]!.id] = { candidates: [{ word: 'secret candidate', confidence: 1 }], suspicion: {} };
     const snapshot = toLocalPublicDisplay(state, words);
-    const forbidden = new Set(['secretWordId', 'moleIds', 'votes', 'botMinds', 'botClueMemory', 'reconnectToken', 'guess']);
+    const forbidden = new Set(['secretWordId', 'moleIds', 'votes', 'botMinds', 'botClueMemory', 'moleFinalGuess', 'clueHistory', 'reconnectToken', 'guess']);
     const visit = (value: unknown): void => {
       if (!value || typeof value !== 'object') return;
       for (const [key, child] of Object.entries(value)) { expect(forbidden.has(key), key).toBe(false); visit(child); }
@@ -177,10 +192,46 @@ describe('local transition and scoring guards', () => {
   it('requires a caught human Mole to make exactly one final board guess', () => {
     const started = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-classic'), seeded(105)), words, seeded(106));
     const human = started.players.find((player) => player.kind === 'human')!;
-    const guessing = { ...started, stage: 'guess' as const, moleIds: [human.id], accusedIds: [human.id] };
-    expect(() => finishLocalRound(guessing, words, undefined, seeded(107))).toThrow(/must choose one final board word/i);
-    const scored = finishLocalRound(guessing, words, guessing.boardIds[0], seeded(108));
+    const guessing = { ...started, stage: 'guess' as const, completedClueRounds: started.settings.requiredClueRoundsBeforeVoting, moleIds: [human.id], accusedIds: [human.id] };
+    expect(() => finishLocalRound(guessing, words, undefined, seeded(107))).toThrow(/lock a Final Guess/i);
+    const locked = lockLocalMoleGuess(guessing, words, ' definitely wrong ', seeded(108));
+    expect(locked.moleFinalGuess?.guess).toBe('definitely wrong');
+    expect(() => lockLocalMoleGuess(locked, words, 'second try', seeded(109))).toThrow(/already locked/i);
+    const scored = finishLocalRound(locked, words);
     expect(['result', 'match-complete']).toContain(scored.stage);
-    expect(() => finishLocalRound(scored, words, guessing.boardIds[0], seeded(109))).toThrow(/already been scored/i);
+    expect(scored.moleFinalGuess).toBeNull();
+    expect(() => finishLocalRound(scored, words)).toThrow(/already been scored/i);
+  });
+
+  it.each([1, 2, 3, 4, 5] as const)('completes exactly %i Clue Rounds before discussion', (required) => {
+    const random = seeded(400 + required);
+    const settings = { ...localSettingsForPreset('local-classic'), requiredClueRoundsBeforeVoting: required };
+    let state = startLocalRound(createLocalGame(roster(4, 2), settings, random), words, random);
+    while (state.stage === 'roles') state = advanceLocalRole(state);
+    const stableOrder = [...state.turnOrder];
+    while (state.stage === 'clues') {
+      const current = state.players.find((player) => player.id === state.turnOrder[state.currentTurn])!;
+      state = playLocalClue(state, words, current.kind === 'human' ? `human ${state.currentClueRound} ${state.currentTurn}` : undefined, random);
+      expect(state.turnOrder).toEqual(stableOrder);
+    }
+    expect(state.stage).toBe('discussion');
+    expect(state.completedClueRounds).toBe(required);
+    expect(Object.values(state.clueHistory).every((clues) => clues.length === required)).toBe(true);
+  });
+
+  it('rejects engine-level early voting even from a forged discussion state', () => {
+    const started = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-classic'), seeded(510)), words, seeded(511));
+    expect(() => beginLocalVoting({ ...started, stage: 'discussion', completedClueRounds: 1 }, words)).toThrow(/stays locked/i);
+    expect(() => finishLocalRound({ ...started, stage: 'voting', accusedIds: [started.players[0]!.id] }, words)).toThrow(/cannot score/i);
+  });
+
+  it('routes a caught Bot Mole through Final Guess before scoring', () => {
+    const started = startLocalRound(createLocalGame(roster(3, 1), localSettingsForPreset('local-classic'), seeded(520)), words, seeded(521));
+    const bot = started.players.find((player) => player.kind === 'bot')!;
+    const guessing = { ...started, stage: 'guess' as const, completedClueRounds: started.settings.requiredClueRoundsBeforeVoting, moleIds: [bot.id], accusedIds: [bot.id] };
+    expect(() => finishLocalRound(guessing, words)).toThrow(/Final Guess/i);
+    const locked = lockLocalMoleGuess(guessing, words, undefined, seeded(522));
+    expect(locked.moleFinalGuess?.playerId).toBe(bot.id);
+    expect(['result', 'match-complete']).toContain(finishLocalRound(locked, words).stage);
   });
 });

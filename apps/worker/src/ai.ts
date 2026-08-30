@@ -13,6 +13,7 @@ export class BotAI {
       'You are playing a family-friendly secret-word party game.',
       `Secret word: ${word.display}. Category: ${word.category}.`,
       `Previous clues: ${previousClues.join(', ') || 'none'}.`,
+      `Avoid obvious or giveaway clues${word.botClues?.direct.length ? ` such as: ${word.botClues.direct.join(', ')}` : ''}.`,
       `Return JSON only: {"clue":"one subtle clue under ${maxLength} characters"}.`,
       'Never include the secret word or a spelling variation.'
     ].join('\n');
@@ -22,7 +23,8 @@ export class BotAI {
       const result = await Promise.race([request, timeout]) as { response?: string };
       const raw = result.response?.match(/\{[\s\S]*\}/)?.[0];
       const clue = raw ? JSON.parse(raw).clue : null;
-      if (typeof clue !== 'string' || !validateBotClue(clue, word, maxLength)) throw new Error('Unsafe AI clue');
+      const direct = new Set((word.botClues?.direct ?? []).map((value) => value.toLocaleLowerCase('en-CA').trim()));
+      if (typeof clue !== 'string' || !validateBotClue(clue, word, maxLength) || direct.has(clue.toLocaleLowerCase('en-CA').trim())) throw new Error('Unsafe AI clue');
       this.failures = 0;
       return clue.trim();
     } catch {

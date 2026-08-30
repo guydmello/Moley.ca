@@ -44,6 +44,8 @@ export type RoomState = {
   updatedAt: number;
   stage: GameStage;
   roundNumber: number;
+  currentClueRound: number;
+  completedClueRounds: number;
   settings: GameSettings;
   players: StoredPlayer[];
   turnOrder: string[];
@@ -53,6 +55,7 @@ export type RoomState = {
   word: WordEntry | null;
   usedWordIds: string[];
   botClueMemory: Record<string, string[]>;
+  clueHistory: Record<string, string[]>;
   moleIds: string[];
   accusedIds: string[];
   votesRevealed: Record<string, number> | null;

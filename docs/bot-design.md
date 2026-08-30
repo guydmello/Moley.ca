@@ -8,7 +8,7 @@ An innocent bot may use the word, category, public clues, player names, and publ
 
 ## Deterministic engine
 
-The always-available engine uses curated word tags and safe clue metadata. Innocents choose non-repeating validated clues. Moles maintain candidate/confidence pairs, mimic the abstraction level of observed clues, and choose deliberately broad bluffs when uncertain. Voting scores clue absence, semantic distance, and weak evidence with difficulty-dependent noise. Personalities adjust how frequently a bot comments and how confidently it acts.
+The always-available engine uses curated direct, medium, subtle, tag, and related-concept metadata. Innocents choose normalized-unique validated clues across every Clue Round. Normal interleaves medium and subtle themes before direct candidates; Sneaky starts subtle; Easy may use more direct clues. Indirect compound fallbacks provide enough meaningful variety for bot-heavy games. Moles keep candidate/confidence pairs across Clue Rounds, mimic the abstraction level of observed clues, and choose deliberately broad bluffs when uncertain. Voting scores clue absence, semantic distance, and weak evidence with difficulty-dependent noise. Personalities adjust style without bypassing anti-giveaway rules.
 
 Difficulty is probabilistic:
 

@@ -12,7 +12,7 @@ export type LocalPreset = 'local-classic' | 'local-bots' | 'pass-the-phone' | 'b
 export type LocalStage = 'setup' | 'roles' | 'clues' | 'discussion' | 'voting' | 'guess' | 'result' | 'match-complete';
 export type LocalVisibility = 'private' | 'pass' | 'public';
 export type LocalDifficulty = 'easy' | 'normal' | 'sneaky';
-export const LOCAL_SCHEMA_VERSION = 2 as const;
+export const LOCAL_SCHEMA_VERSION = 3 as const;
 
 export type LocalPlayer = {
   id: string;
@@ -34,6 +34,7 @@ export type LocalSettings = {
   boardSize: 5 | 6 | 7 | 8 | 9 | 10;
   targetScore: number;
   clueSeconds: number;
+  requiredClueRoundsBeforeVoting: 1 | 2 | 3 | 4 | 5;
   fastBots: boolean;
   sound: boolean;
   haptics: boolean;
@@ -48,6 +49,8 @@ export type LocalGameState = {
   players: LocalPlayer[];
   settings: LocalSettings;
   roundNumber: number;
+  currentClueRound: number;
+  completedClueRounds: number;
   boardIds: string[];
   secretWordId: string | null;
   moleIds: string[];
@@ -56,12 +59,15 @@ export type LocalGameState = {
   roleIndex: number;
   currentTurn: number;
   clues: Record<string, string>;
+  clueHistory: Record<string, string[]>;
   discussion: string[];
   votes: Record<string, string>;
   voteIndex: number;
   accusedIds: string[];
   botMinds: Record<string, { candidates: { word: string; confidence: number }[]; suspicion: Record<string, number> }>;
   botClueMemory: Record<string, string[]>;
+  moleFinalGuess: { playerId: string; guess: string } | null;
+  roundScored: boolean;
   result: RoundResult | null;
   paused: boolean;
   createdAt: number;
@@ -69,11 +75,14 @@ export type LocalGameState = {
 };
 
 export type LocalPublicDisplayState = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sessionId: string;
   visibility: Exclude<LocalVisibility, 'private'>;
   stage: LocalStage;
   roundNumber: number;
+  currentClueRound: number;
+  completedClueRounds: number;
+  requiredClueRoundsBeforeVoting: number;
   board: { id: string; display: string }[];
   boardSize: LocalSettings['boardSize'];
   targetScore: number;
@@ -97,11 +106,14 @@ export function toLocalPublicDisplay(state: LocalGameState, catalog: WordEntry[]
   const reveal = ['result', 'match-complete'].includes(state.stage);
   const active = state.players.filter((player) => player.active);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sessionId: state.sessionId,
     visibility: localStageVisibility(state.stage),
     stage: state.stage,
     roundNumber: state.roundNumber,
+    currentClueRound: state.currentClueRound,
+    completedClueRounds: state.completedClueRounds,
+    requiredClueRoundsBeforeVoting: state.settings.requiredClueRoundsBeforeVoting,
     board: state.boardIds.flatMap((id) => {
       const word = catalog.find((entry) => entry.id === id);
       return word ? [{ id: word.id, display: word.display }] : [];
@@ -122,11 +134,11 @@ export function toLocalPublicDisplay(state: LocalGameState, catalog: WordEntry[]
 }
 
 export function validateLocalPublicDisplay(value: unknown, sessionId: string): value is LocalPublicDisplayState {
-  if (!isRecord(value) || value.schemaVersion !== 1 || value.sessionId !== sessionId || !LOCAL_STAGES.includes(value.stage as LocalStage)) return false;
-  const allowed = new Set(['schemaVersion', 'sessionId', 'visibility', 'stage', 'roundNumber', 'board', 'boardSize', 'targetScore', 'players', 'turnOrder', 'currentTurn', 'clues', 'discussion', 'voteCount', 'accusedIds', 'result', 'paused', 'updatedAt']);
+  if (!isRecord(value) || value.schemaVersion !== 2 || value.sessionId !== sessionId || !LOCAL_STAGES.includes(value.stage as LocalStage)) return false;
+  const allowed = new Set(['schemaVersion', 'sessionId', 'visibility', 'stage', 'roundNumber', 'currentClueRound', 'completedClueRounds', 'requiredClueRoundsBeforeVoting', 'board', 'boardSize', 'targetScore', 'players', 'turnOrder', 'currentTurn', 'clues', 'discussion', 'voteCount', 'accusedIds', 'result', 'paused', 'updatedAt']);
   if (Object.keys(value).some((key) => !allowed.has(key))) return false;
   const stage = value.stage as LocalStage;
-  if (value.visibility !== localStageVisibility(stage) || !integerIn(value.roundNumber, 0, 100_000) || ![5, 6, 7, 8, 9, 10].includes(Number(value.boardSize))) return false;
+  if (value.visibility !== localStageVisibility(stage) || !integerIn(value.roundNumber, 0, 100_000) || !integerIn(value.currentClueRound, 1, 5) || !integerIn(value.completedClueRounds, 0, 5) || !integerIn(value.requiredClueRoundsBeforeVoting, 1, 5) || ![5, 6, 7, 8, 9, 10].includes(Number(value.boardSize))) return false;
   if (!integerIn(value.targetScore, 1, 100) || !integerIn(value.currentTurn, 0, 100) || !integerIn(value.voteCount, 0, 100) || typeof value.paused !== 'boolean' || !finiteTimestamp(value.updatedAt)) return false;
   if (!Array.isArray(value.players) || value.players.length > 100 || !value.players.every(validPublicPlayer)) return false;
   const playerIds = new Set(value.players.map((player) => (player as { id: string }).id));
@@ -142,12 +154,12 @@ export function validateLocalPublicDisplay(value: unknown, sessionId: string): v
   return true;
 }
 
-export const LOCAL_PRESETS: Record<LocalPreset, Pick<LocalSettings, 'mode' | 'boardSize' | 'targetScore' | 'clueSeconds' | 'fastBots'>> = {
-  'local-classic': { mode: 'shared-screen', boardSize: 5, targetScore: 5, clueSeconds: 45, fastBots: false },
-  'local-bots': { mode: 'shared-screen', boardSize: 6, targetScore: 5, clueSeconds: 30, fastBots: false },
-  'pass-the-phone': { mode: 'pass-the-phone', boardSize: 5, targetScore: 5, clueSeconds: 45, fastBots: false },
-  'big-screen-party': { mode: 'party-board', boardSize: 7, targetScore: 7, clueSeconds: 30, fastBots: true },
-  'offline-cottage': { mode: 'pass-the-phone', boardSize: 5, targetScore: 5, clueSeconds: 0, fastBots: true }
+export const LOCAL_PRESETS: Record<LocalPreset, Pick<LocalSettings, 'mode' | 'boardSize' | 'targetScore' | 'clueSeconds' | 'requiredClueRoundsBeforeVoting' | 'fastBots'>> = {
+  'local-classic': { mode: 'shared-screen', boardSize: 5, targetScore: 5, clueSeconds: 45, requiredClueRoundsBeforeVoting: 2, fastBots: false },
+  'local-bots': { mode: 'shared-screen', boardSize: 5, targetScore: 3, clueSeconds: 30, requiredClueRoundsBeforeVoting: 1, fastBots: true },
+  'pass-the-phone': { mode: 'pass-the-phone', boardSize: 6, targetScore: 7, clueSeconds: 45, requiredClueRoundsBeforeVoting: 3, fastBots: false },
+  'big-screen-party': { mode: 'party-board', boardSize: 7, targetScore: 10, clueSeconds: 30, requiredClueRoundsBeforeVoting: 4, fastBots: true },
+  'offline-cottage': { mode: 'pass-the-phone', boardSize: 5, targetScore: 10, clueSeconds: 0, requiredClueRoundsBeforeVoting: 5, fastBots: true }
 };
 
 export function localSettingsForPreset(preset: LocalPreset): LocalSettings {
@@ -157,7 +169,7 @@ export function localSettingsForPreset(preset: LocalPreset): LocalSettings {
 export function validateLocalSettings(value: unknown): value is LocalSettings {
   if (!isRecord(value)) return false;
   return LOCAL_PRESET_IDS.includes(value.preset as LocalPreset) && LOCAL_MODES.includes(value.mode as LocalMode) &&
-    [5, 6, 7, 8, 9, 10].includes(Number(value.boardSize)) && integerIn(value.targetScore, 1, 100) && integerIn(value.clueSeconds, 0, 300) &&
+    [5, 6, 7, 8, 9, 10].includes(Number(value.boardSize)) && integerIn(value.targetScore, 1, 100) && integerIn(value.clueSeconds, 0, 300) && integerIn(value.requiredClueRoundsBeforeVoting, 1, 5) &&
     [value.fastBots, value.sound, value.haptics].every((entry) => typeof entry === 'boolean') &&
     boundedStringArray(value.categories, 80, 48) && boundedStringArray(value.customWords, 1_000, 80);
 }
@@ -196,10 +208,10 @@ export function createLocalGame(players: LocalPlayer[], settings: LocalSettings,
   const now = Date.now();
   return {
     schemaVersion: LOCAL_SCHEMA_VERSION, sessionId: `local-${Math.floor(random() * 0x100000000).toString(36)}-${now.toString(36)}`,
-    stage: 'setup', players, settings, roundNumber: 0, boardIds: [], secretWordId: null,
+    stage: 'setup', players, settings, roundNumber: 0, currentClueRound: 1, completedClueRounds: 0, boardIds: [], secretWordId: null,
     moleIds: [], turnOrder: [], previousFirstIds: [], roleIndex: 0, currentTurn: 0,
-    clues: {}, discussion: [], votes: {}, voteIndex: 0, accusedIds: [], botMinds: {},
-    botClueMemory: {}, result: null, paused: false, createdAt: now, updatedAt: now
+    clues: {}, clueHistory: {}, discussion: [], votes: {}, voteIndex: 0, accusedIds: [], botMinds: {},
+    botClueMemory: {}, moleFinalGuess: null, roundScored: false, result: null, paused: false, createdAt: now, updatedAt: now
   };
 }
 
@@ -229,7 +241,7 @@ export function startLocalRound(state: LocalGameState, catalog: WordEntry[], ran
     players: roundPlayers.map((player) => ({ ...player, roundGain: 0, moleRounds: moleIds.includes(player.id) ? [...player.moleRounds, roundNumber] : player.moleRounds })),
     boardIds: board.map((word) => word.id), secretWordId: secret.id, moleIds, turnOrder,
     previousFirstIds: [...state.previousFirstIds.slice(-2), turnOrder[0]!], roleIndex: 0, currentTurn: 0,
-    clues: {}, discussion: [], votes: {}, voteIndex: 0, accusedIds: [], botMinds: {}, result: null,
+    currentClueRound: 1, completedClueRounds: 0, clues: {}, clueHistory: {}, discussion: [], votes: {}, voteIndex: 0, accusedIds: [], botMinds: {}, moleFinalGuess: null, roundScored: false, result: null,
     paused: false, updatedAt: Date.now()
   };
 }
@@ -255,13 +267,14 @@ export function playLocalClue(state: LocalGameState, catalog: WordEntry[], human
   let clue = humanClue?.trim() ?? '';
   let botMinds = state.botMinds;
   let botClueMemory = state.botClueMemory;
+  const priorClues = Object.values(state.clueHistory).flat();
   if (player.kind === 'bot') {
-    const used = [...Object.values(state.clues), ...(state.botClueMemory[secret.id] ?? [])];
+    const used = [...priorClues, ...Object.values(state.clues), ...(state.botClueMemory[secret.id] ?? [])];
     if (state.moleIds.includes(player.id)) {
       const board = state.boardIds.map((id) => catalog.find((word) => word.id === id)).filter(Boolean) as WordEntry[];
       let mind = state.botMinds[player.id] ?? { candidates: [], suspicion: {} };
-      for (const observed of Object.values(state.clues)) mind = updateMoleCandidates(mind, observed, board);
-      clue = moleBotClueFromCandidates(mind, Object.values(state.clues), board, used, player.difficulty, player.personality, random);
+      for (const observed of [...priorClues, ...Object.values(state.clues)]) mind = updateMoleCandidates(mind, observed, board);
+      clue = moleBotClueFromCandidates(mind, [...priorClues, ...Object.values(state.clues)], board, used, player.difficulty, player.personality, random);
       botMinds = { ...state.botMinds, [player.id]: mind };
     } else {
       clue = innocentBotClue(secret, used, player.difficulty, random, player.personality);
@@ -270,11 +283,19 @@ export function playLocalClue(state: LocalGameState, catalog: WordEntry[], human
   }
   if (!clue) throw new Error('Enter a clue before continuing.');
   if (clue.length > 80) throw new Error('Keep clues under 80 characters.');
+  if (player.kind === 'bot' && [...priorClues, ...Object.values(state.clues)].some((used) => normalizeGuess(used) === normalizeGuess(clue))) throw new Error('That Bot clue has already been used this Game Round.');
   if (player.kind === 'human' && !state.moleIds.includes(player.id) && !validateBotClue(clue, secret, 80)) throw new Error('That clue is too close to the secret word.');
   const clues = { ...state.clues, [player.id]: clue };
   const nextTurn = state.currentTurn + 1;
   if (nextTurn >= state.turnOrder.length) {
-    return { ...state, clues, botMinds, botClueMemory, stage: 'discussion', currentTurn: state.currentTurn, discussion: localBotDiscussion(state.players, clues, secret, state.moleIds, random), updatedAt: Date.now() };
+    const clueHistory = { ...state.clueHistory };
+    for (const [id, value] of Object.entries(clues)) clueHistory[id] = [...(clueHistory[id] ?? []), value];
+    const completedClueRounds = state.completedClueRounds + 1;
+    if (completedClueRounds < state.settings.requiredClueRoundsBeforeVoting) {
+      return { ...state, clues: {}, clueHistory, botMinds, botClueMemory, currentClueRound: state.currentClueRound + 1, completedClueRounds, currentTurn: 0, updatedAt: Date.now() };
+    }
+    const allLatestClues = Object.fromEntries(Object.entries(clueHistory).map(([id, values]) => [id, values.at(-1) ?? '']));
+    return { ...state, clues, clueHistory, botMinds, botClueMemory, completedClueRounds, stage: 'discussion', currentTurn: state.currentTurn, discussion: localBotDiscussion(state.players, allLatestClues, secret, state.moleIds, random), updatedAt: Date.now() };
   }
   return { ...state, clues, botMinds, botClueMemory, currentTurn: nextTurn, updatedAt: Date.now() };
 }
@@ -293,6 +314,7 @@ function localBotDiscussion(players: LocalPlayer[], clues: Record<string, string
 
 export function beginLocalVoting(state: LocalGameState, catalog: WordEntry[], random: () => number = Math.random): LocalGameState {
   if (state.stage !== 'discussion') throw new Error('Voting can only begin after the discussion.');
+  if (state.completedClueRounds < state.settings.requiredClueRoundsBeforeVoting) throw new Error('Voting stays locked until every configured Clue Round is complete.');
   const secret = catalog.find((word) => word.id === state.secretWordId) ?? null;
   const active = state.players.filter((player) => player.active);
   const votes = { ...state.votes };
@@ -304,6 +326,7 @@ export function beginLocalVoting(state: LocalGameState, catalog: WordEntry[], ra
 
 export function submitLocalVote(state: LocalGameState, voterId: string, targetId: string): LocalGameState {
   if (state.stage !== 'voting') throw new Error('Voting is not open right now.');
+  if (state.completedClueRounds < state.settings.requiredClueRoundsBeforeVoting) throw new Error('Voting stays locked until every configured Clue Round is complete.');
   const voter = state.players.find((player) => player.id === voterId && player.active);
   const target = state.players.find((player) => player.id === targetId && player.active);
   if (!voter || voter.kind !== 'human' || !target) throw new Error('That local vote is not eligible.');
@@ -321,40 +344,51 @@ export function allHumanVotesComplete(state: LocalGameState): boolean {
 
 export function resolveLocalVoting(state: LocalGameState, catalog: WordEntry[], random: () => number = Math.random): LocalGameState {
   if (state.stage !== 'voting' || !allHumanVotesComplete(state)) throw new Error('Finish every private vote before the reveal.');
+  if (state.completedClueRounds < state.settings.requiredClueRoundsBeforeVoting) throw new Error('Voting stays locked until every configured Clue Round is complete.');
   const active = state.players.filter((player) => player.active);
   const totals = new Map(active.map((player) => [player.id, 0]));
   for (const target of Object.values(state.votes)) if (totals.has(target)) totals.set(target, totals.get(target)! + 1);
   const top = Math.max(...totals.values());
   const tied = [...totals].filter(([, count]) => count === top).map(([id]) => id);
   const accusedIds = [shuffled(tied, random)[0]!];
-  const caughtHumanMole = accusedIds.some((id) => state.moleIds.includes(id) && state.players.find((player) => player.id === id)?.kind === 'human');
-  if (caughtHumanMole) return { ...state, accusedIds, stage: 'guess', updatedAt: Date.now() };
+  const caughtMole = accusedIds.some((id) => state.moleIds.includes(id));
+  if (caughtMole) return { ...state, accusedIds, stage: 'guess', moleFinalGuess: null, updatedAt: Date.now() };
   return finishLocalRound({ ...state, accusedIds }, catalog, undefined, random);
 }
 
-export function finishLocalRound(state: LocalGameState, catalog: WordEntry[], humanGuessId?: string, random: () => number = Math.random): LocalGameState {
+export function lockLocalMoleGuess(state: LocalGameState, catalog: WordEntry[], humanGuess?: string, random: () => number = Math.random): LocalGameState {
+  if (state.stage !== 'guess') throw new Error('There is no Mole Final Guess to lock right now.');
+  if (state.moleFinalGuess) throw new Error('The Mole Final Guess is already locked.');
+  const moleId = state.moleIds.find((id) => state.accusedIds.includes(id));
+  const mole = state.players.find((player) => player.id === moleId);
+  if (!mole || !moleId) throw new Error('The caught Mole is unavailable.');
+  let guess = humanGuess?.trim() ?? '';
+  if (mole.kind === 'bot') {
+    const board = state.boardIds.map((id) => catalog.find((word) => word.id === id)).filter(Boolean) as WordEntry[];
+    let mind = state.botMinds[moleId] ?? { candidates: [], suspicion: {} };
+    for (const clue of Object.values(state.clueHistory).flat()) mind = updateMoleCandidates(mind, clue, board);
+    guess = moleBotGuess(mind, board, mole.difficulty, random);
+  }
+  if (!guess) throw new Error('The caught Mole must enter one final guess.');
+  if (guess.length > 80) throw new Error('Keep the final guess under 80 characters.');
+  return { ...state, moleFinalGuess: { playerId: moleId, guess }, updatedAt: Date.now() };
+}
+
+export function finishLocalRound(state: LocalGameState, catalog: WordEntry[], _legacyGuess?: string, _random: () => number = Math.random): LocalGameState {
   if (!['voting', 'guess'].includes(state.stage)) throw new Error('This local round has already been scored or is not ready to score.');
+  if (state.completedClueRounds < state.settings.requiredClueRoundsBeforeVoting) throw new Error('This Game Round cannot score before every configured Clue Round is complete.');
+  if (state.roundScored || state.result) throw new Error('This local round has already been scored.');
   const secret = catalog.find((word) => word.id === state.secretWordId);
   if (!secret) throw new Error('The saved secret word is unavailable.');
   const guesses: Record<string, { guess: string; correct?: boolean }> = {};
   for (const moleId of state.moleIds.filter((id) => state.accusedIds.includes(id))) {
-    const mole = state.players.find((player) => player.id === moleId);
-    if (mole?.kind === 'human') {
-      if (!humanGuessId || !state.boardIds.includes(humanGuessId)) throw new Error('The caught Mole must choose one final board word.');
-      const guessed = catalog.find((word) => word.id === humanGuessId)?.display ?? '';
-      if (!guessed) throw new Error('That final word guess is unavailable.');
-      guesses[moleId] = { guess: guessed };
-    } else if (mole) {
-      const board = state.boardIds.map((id) => catalog.find((word) => word.id === id)).filter(Boolean) as WordEntry[];
-      let mind = state.botMinds[moleId] ?? { candidates: [], suspicion: {} };
-      for (const clue of Object.values(state.clues)) mind = updateMoleCandidates(mind, clue, board);
-      guesses[moleId] = { guess: moleBotGuess(mind, board, mole.difficulty, random) };
-    }
+    if (!state.moleFinalGuess || state.moleFinalGuess.playerId !== moleId) throw new Error('The caught Mole must lock a Final Guess before the secret can be revealed.');
+    guesses[moleId] = { guess: state.moleFinalGuess.guess };
   }
   const result = scoreRound({ playerIds: state.players.filter((player) => player.active).map((player) => player.id), moleIds: state.moleIds, accusedIds: state.accusedIds, guesses, word: secret });
   const players = state.players.map((player) => ({ ...player, roundGain: result.gains[player.id] ?? 0, score: player.score + (result.gains[player.id] ?? 0) }));
   const complete = players.some((player) => player.score >= state.settings.targetScore);
-  return { ...state, players, result, stage: complete ? 'match-complete' : 'result', updatedAt: Date.now() };
+  return { ...state, players, result, votes: {}, botMinds: {}, roundScored: true, moleFinalGuess: null, stage: complete ? 'match-complete' : 'result', updatedAt: Date.now() };
 }
 
 export function resetLocalMatch(state: LocalGameState, keepScores = false): LocalGameState {
@@ -362,7 +396,7 @@ export function resetLocalMatch(state: LocalGameState, keepScores = false): Loca
     ...state, stage: 'setup', roundNumber: keepScores ? state.roundNumber : 0,
     players: state.players.map((player) => ({ ...player, score: keepScores ? player.score : 0, roundGain: 0, moleRounds: keepScores ? player.moleRounds : [] })),
     boardIds: [], secretWordId: null, moleIds: [], turnOrder: [], previousFirstIds: keepScores ? state.previousFirstIds : [],
-    clues: {}, discussion: [], votes: {}, accusedIds: [], result: null, updatedAt: Date.now()
+    currentClueRound: 1, completedClueRounds: 0, clues: {}, clueHistory: {}, discussion: [], votes: {}, accusedIds: [], moleFinalGuess: null, roundScored: false, result: null, updatedAt: Date.now()
   };
 }
 
@@ -376,6 +410,7 @@ export function validateLocalState(value: unknown, catalog: WordEntry[]): value 
   if (![settings.fastBots, settings.sound, settings.haptics].every((entry) => typeof entry === 'boolean')) return false;
   if (!boundedStringArray(settings.categories, 80, 48) || !boundedStringArray(settings.customWords, 1_000, 80)) return false;
   if (!LOCAL_STAGES.includes(state.stage as LocalStage) || !integerIn(state.roundNumber, 0, 100_000)) return false;
+  if (!integerIn(state.currentClueRound, 1, 5) || !integerIn(state.completedClueRounds, 0, 5) || state.completedClueRounds! > settings.requiredClueRoundsBeforeVoting!) return false;
   if (!integerIn(state.roleIndex, 0, 100) || !integerIn(state.currentTurn, 0, 100) || !integerIn(state.voteIndex, 0, 100)) return false;
   if (!finiteTimestamp(state.createdAt) || !finiteTimestamp(state.updatedAt) || state.updatedAt! < state.createdAt!) return false;
 
@@ -389,11 +424,13 @@ export function validateLocalState(value: unknown, catalog: WordEntry[]): value 
   if (!boundedStringArray(state.moleIds, 20, 160) || new Set(state.moleIds).size !== state.moleIds.length || state.moleIds.some((id) => !activeIds.has(id))) return false;
   if (!boundedStringArray(state.accusedIds, 20, 160) || new Set(state.accusedIds).size !== state.accusedIds.length || state.accusedIds.some((id) => !activeIds.has(id))) return false;
   if (!boundedStringArray(state.discussion, 100, 280)) return false;
-  if (!validStringRecord(state.clues, 100, 80) || !validStringRecord(state.votes, 100, 160)) return false;
+  if (!validStringRecord(state.clues, 100, 80) || !validStringRecord(state.votes, 100, 160) || !validStringArrayRecord(state.clueHistory, 100, 5, 80)) return false;
   if (Object.keys(state.clues).some((id) => !activeIds.has(id))) return false;
   if (Object.entries(state.votes).some(([voter, target]) => !activeIds.has(voter) || !activeIds.has(target) || voter === target)) return false;
   if (!validBotMinds(state.botMinds, playerIds) || !validBotClueMemory(state.botClueMemory)) return false;
-  if (typeof state.paused !== 'boolean' || !(state.result === null || validRoundResult(state.result))) return false;
+  if (typeof state.paused !== 'boolean' || typeof state.roundScored !== 'boolean' || !(state.result === null || validRoundResult(state.result))) return false;
+  if (!(state.moleFinalGuess === null || (isRecord(state.moleFinalGuess) && boundedString(state.moleFinalGuess.playerId, 160) && activeIds.has(state.moleFinalGuess.playerId) && boundedString(state.moleFinalGuess.guess, 80)))) return false;
+  if (state.moleFinalGuess && state.stage !== 'guess') return false;
 
   const knownCatalog = buildLocalCatalog(catalog, settings.customWords);
   const byId = new Map(knownCatalog.map((word) => [word.id, word]));
@@ -407,16 +444,18 @@ export function validateLocalState(value: unknown, catalog: WordEntry[]): value 
     if (state.turnOrder.length !== activeIds.size || state.turnOrder.some((id) => !activeIds.has(id))) return false;
     if (!state.moleIds.length || state.currentTurn! >= state.turnOrder.length) return false;
   }
-  if (state.stage === 'result' && state.result === null) return false;
+  if (['result', 'match-complete'].includes(state.stage as LocalStage) && (state.result === null || !state.roundScored)) return false;
   return true;
 }
 
 /** Upgrades durable offline saves without ever guessing at missing private state. */
 export function migrateLocalState(value: unknown, catalog: WordEntry[]): LocalGameState | null {
-  if (!isRecord(value) || ![1, LOCAL_SCHEMA_VERSION].includes(Number(value.schemaVersion))) return null;
+  if (!isRecord(value) || ![1, 2, LOCAL_SCHEMA_VERSION].includes(Number(value.schemaVersion))) return null;
   const rawSettings = isRecord(value.settings) ? value.settings : {};
   const preset = LOCAL_PRESET_IDS.includes(rawSettings.preset as LocalPreset) ? rawSettings.preset as LocalPreset : 'local-classic';
   const defaults = localSettingsForPreset(preset);
+  const savedStage = LOCAL_STAGES.includes(value.stage as LocalStage) ? value.stage as LocalStage : 'setup';
+  const requiredClueRounds = integerIn(rawSettings.requiredClueRoundsBeforeVoting, 1, 5) ? rawSettings.requiredClueRoundsBeforeVoting as LocalSettings['requiredClueRoundsBeforeVoting'] : defaults.requiredClueRoundsBeforeVoting;
   const players = Array.isArray(value.players) ? value.players.map((entry) => {
     if (!isRecord(entry)) return entry;
     return {
@@ -438,13 +477,20 @@ export function migrateLocalState(value: unknown, catalog: WordEntry[]): LocalGa
       ...defaults,
       ...rawSettings,
       preset,
+      requiredClueRoundsBeforeVoting: requiredClueRounds,
       haptics: typeof rawSettings.haptics === 'boolean' ? rawSettings.haptics : true
     },
     previousFirstIds: value.previousFirstIds ?? [],
+    currentClueRound: integerIn(value.currentClueRound, 1, 5) ? value.currentClueRound : 1,
+    completedClueRounds: integerIn(value.completedClueRounds, 0, 5) ? value.completedClueRounds : ['setup', 'roles', 'clues'].includes(savedStage) ? 0 : requiredClueRounds,
+    clueHistory: value.clueHistory ?? {},
     discussion: value.discussion ?? [],
     accusedIds: value.accusedIds ?? [],
     botMinds: value.botMinds ?? {},
     botClueMemory: value.botClueMemory ?? {},
+    moleFinalGuess: value.moleFinalGuess ?? null,
+    roundScored: typeof value.roundScored === 'boolean' ? value.roundScored : value.result !== null && value.result !== undefined,
+    result: isRecord(value.result) ? { ...value.result, moleGuesses: isRecord(value.result.moleGuesses) ? value.result.moleGuesses : {} } : value.result,
     paused: typeof value.paused === 'boolean' ? value.paused : false
   };
   return validateLocalState(candidate, catalog) ? candidate : null;
@@ -467,6 +513,11 @@ function validStringRecord(value: unknown, maxItems: number, maxLength: number):
   if (!isRecord(value)) return false;
   const entries = Object.entries(value);
   return entries.length <= maxItems && entries.every(([key, entry]) => !['__proto__', 'constructor', 'prototype'].includes(key) && boundedString(key, 160) && boundedString(entry, maxLength));
+}
+function validStringArrayRecord(value: unknown, maxItems: number, maxValues: number, maxLength: number): value is Record<string, string[]> {
+  if (!isRecord(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= maxItems && entries.every(([key, entry]) => !['__proto__', 'constructor', 'prototype'].includes(key) && boundedString(key, 160) && boundedStringArray(entry, maxValues, maxLength));
 }
 function validNumberRecord(value: unknown, maxItems: number): value is Record<string, number> {
   if (!isRecord(value)) return false;
@@ -504,6 +555,6 @@ function validBotClueMemory(value: unknown): boolean {
 function validRoundResult(value: unknown): value is RoundResult {
   if (!isRecord(value)) return false;
   return boundedStringArray(value.accusedIds, 20, 160) && boundedStringArray(value.moleIds, 20, 160) && boundedStringArray(value.caughtMoleIds, 20, 160) &&
-    boundedStringArray(value.escapedMoleIds, 20, 160) && boundedStringArray(value.correctGuessMoleIds, 20, 160) && boundedString(value.secretWord, 80) &&
+    boundedStringArray(value.escapedMoleIds, 20, 160) && boundedStringArray(value.correctGuessMoleIds, 20, 160) && validStringRecord(value.moleGuesses, 20, 80) && boundedString(value.secretWord, 80) &&
     validNumberRecord(value.gains, 100) && boundedString(value.headline, 280);
 }

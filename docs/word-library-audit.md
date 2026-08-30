@@ -9,14 +9,16 @@ Audit date: 2026-08-27
 | Total word entries | 1,167 |
 | Categories | 80 |
 | Bot-enabled entries | 19 |
-| Unique bot-enabled concepts | 16 |
-| Curated clues per bot-enabled entry | 10 |
-| Average curated clue count | 10.0 |
+| Unique bot-enabled concepts | 15 |
+| Curated clues per bot-enabled entry | 10–14 |
+| Average curated clue count | 10.21 |
 | Minimum curated clue count | 10 |
 | Bot-enabled entries below minimum | 0 |
 | Entries disabled as bot secrets | 1,148 |
 
 Duplicate displays across categories retain separate IDs. `Beach`, `Hockey`, and `Moon` are intentionally bot-enabled in multiple relevant categories with the same concept metadata. The `Apple` technology brand entry is intentionally excluded because the curated Apple clues describe the fruit.
+
+The structured pool contains 58 direct, 77 medium, and 59 subtle entries. Classic/Normal consumes medium and subtle candidates first. Dog now has 14 reviewed candidates: giveaway-level `fetch`, `bark`, `puppy`, and `leash` remain in the direct tier, while normal/subtle play favours clues such as `companion`, `kennel`, `park`, `rescue`, and `groomer`.
 
 ## Bot-enabled coverage
 

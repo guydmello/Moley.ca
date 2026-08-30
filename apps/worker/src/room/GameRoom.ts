@@ -25,6 +25,8 @@ const emptyState = (): RoomState => ({
   updatedAt: 0,
   stage: 'ROOM_LOBBY',
   roundNumber: 0,
+  currentClueRound: 1,
+  completedClueRounds: 0,
   settings: defaultSettings,
   players: [],
   turnOrder: [],
@@ -34,6 +36,7 @@ const emptyState = (): RoomState => ({
   word: null,
   usedWordIds: [],
   botClueMemory: {},
+  clueHistory: {},
   moleIds: [],
   accusedIds: [],
   votesRevealed: null,
@@ -172,6 +175,7 @@ export class GameRoom extends DurableObject<Env> {
   private normalizeStoredState(raw: Partial<RoomState>): RoomState {
     const base = emptyState();
     const settings = settingsSchema.parse({ ...defaultSettings, ...(raw.settings ?? {}) });
+    const beforeDiscussion = ['ROOM_LOBBY', 'ROUND_SETUP', 'ROLE_REVEAL', 'ROLE_READY', 'CLUE_PREPARATION', 'CLUE_TURN'].includes(raw.stage ?? 'ROOM_LOBBY');
     return {
       ...base, ...raw, settings,
       featureFlags: runtimeFeatures(this.env),
@@ -186,7 +190,11 @@ export class GameRoom extends DurableObject<Env> {
       voteRevealItems: raw.voteRevealItems ?? [], reactions: raw.reactions ?? {},
       board: raw.board ?? [], previousFirstIds: raw.previousFirstIds ?? [],
       botClueMemory: raw.botClueMemory ?? {},
-      history: (raw.history ?? []).slice(-24), chaosModifier: raw.chaosModifier ?? null,
+      clueHistory: raw.clueHistory ?? {},
+      currentClueRound: raw.currentClueRound ?? (beforeDiscussion ? 1 : settings.requiredClueRoundsBeforeVoting),
+      completedClueRounds: raw.completedClueRounds ?? (beforeDiscussion ? 0 : settings.requiredClueRoundsBeforeVoting),
+      result: raw.result ? { ...raw.result, moleGuesses: raw.result.moleGuesses ?? {} } : null,
+      history: (raw.history ?? []).slice(-24).map((entry) => ({ ...entry, result: { ...entry.result, moleGuesses: entry.result.moleGuesses ?? {} } })), chaosModifier: raw.chaosModifier ?? null,
       revoteUsed: raw.revoteUsed ?? false
       ,crowdWords: raw.crowdWords ?? []
     } as RoomState;
@@ -335,6 +343,7 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (event.type === 'submit_vote') {
       if (!['VOTING', 'REVOTE'].includes(this.room.stage)) throw new Error('Voting is not open yet.');
+      if (this.room.completedClueRounds < this.room.settings.requiredClueRoundsBeforeVoting) throw new Error('Voting stays locked until every configured Clue Round is complete.');
       if (player.kind === 'spectator') throw new Error('Spectators cannot vote.');
       if (event.playerId === player.id) throw new Error('You cannot vote for yourself.');
       if (!this.activeSeats().some((seat) => seat.id === event.playerId)) throw new Error('That player is not eligible.');
@@ -409,6 +418,9 @@ export class GameRoom extends DurableObject<Env> {
     this.room.moleIds = assignMoles(seats.map((player) => ({ id: player.id, moleRounds: player.moleRounds, kind: player.kind === 'bot' ? 'bot' : 'human' })), requested, this.room.roundNumber, secureRandom);
     this.room.turnOrder = newRoundTurnOrder(seats.map((player) => player.id), this.room.turnOrder, this.room.previousFirstIds, secureRandom);
     this.room.currentTurn = 0;
+    this.room.currentClueRound = 1;
+    this.room.completedClueRounds = 0;
+    this.room.clueHistory = {};
     this.room.accusedIds = [];
     this.room.votesRevealed = null;
     this.room.result = null;
@@ -452,15 +464,15 @@ export class GameRoom extends DurableObject<Env> {
     while (this.room.stage === 'CLUE_TURN') {
       const current = this.currentPlayer();
       if (!current || (current.kind !== 'bot' && !current.autopilot)) break;
-      const observed = Object.fromEntries(this.activeSeats().filter((player) => player.clueRevealed && player.clue).map((player) => [player.id, player.clue!]));
+      const observedClues = Object.values(this.room.clueHistory).flat();
       if (current.role === 'mole') {
         const candidates = this.moleCandidateWords();
         let mind = current.botMind ?? { candidates: [], suspicion: {} };
-        for (const clue of Object.values(observed)) mind = updateMoleCandidates(mind, clue, candidates);
+        for (const clue of observedClues) mind = updateMoleCandidates(mind, clue, candidates);
         current.botMind = mind;
-        current.clue = moleBotClueFromCandidates(mind, Object.values(observed), candidates, Object.values(observed), current.difficulty ?? 'normal', current.personality ?? 'bluffing', secureRandom);
+        current.clue = moleBotClueFromCandidates(mind, observedClues, candidates, observedClues, current.difficulty ?? 'normal', current.personality ?? 'bluffing', secureRandom);
       } else if (this.room.word) {
-        const used = [...Object.values(observed), ...(this.room.botClueMemory[this.room.word.id] ?? [])];
+        const used = [...observedClues, ...(this.room.botClueMemory[this.room.word.id] ?? [])];
         const fallback = innocentBotClue(this.room.word, used, current.difficulty ?? this.room.settings.botDifficulty, secureRandom, current.personality ?? 'detective');
         const enhanced = featureEnabled(this.room.featureFlags, 'ai')
           ? await this.ai.improveInnocentClue(this.room.word, used, this.room.settings.clueMaxLength)
@@ -470,8 +482,12 @@ export class GameRoom extends DurableObject<Env> {
       }
       current.clue = current.clue || 'familiar';
       current.clueRevealed = true;
+      this.archiveClue(current);
       this.room.currentTurn += 1;
-      if (this.room.currentTurn >= this.room.turnOrder.length) { this.enterDiscussion(); break; }
+      if (this.room.currentTurn >= this.room.turnOrder.length) {
+        if (this.completeClueRound()) continue;
+        this.enterDiscussion(); break;
+      }
     }
   }
 
@@ -480,14 +496,43 @@ export class GameRoom extends DurableObject<Env> {
     if (current) {
       current.clueRevealed = true;
       if (!current.clue && this.room.settings.clueMode === 'spoken') current.clue = 'Spoken clue';
+      this.archiveClue(current);
     }
     this.room.currentTurn += 1;
     this.clearTimer();
-    if (this.room.currentTurn >= this.room.turnOrder.length) { this.enterDiscussion(); return; }
+    if (this.room.currentTurn >= this.room.turnOrder.length) {
+      if (this.completeClueRound()) {
+        await this.playBotsUntilHuman();
+        if (this.room.stage === 'CLUE_TURN') this.startStageTimer(this.room.settings.rapidSeconds);
+      } else this.enterDiscussion();
+      return;
+    }
     const next = this.currentPlayer();
     if (next?.clue) next.clueRevealed = true;
     await this.playBotsUntilHuman();
     if (this.room.stage === 'CLUE_TURN') this.startStageTimer(this.room.settings.rapidSeconds);
+  }
+
+  private archiveClue(player: StoredPlayer): void {
+    if (!player.clue) return;
+    const history = this.room.clueHistory[player.id] ?? [];
+    if (history.length < this.room.currentClueRound) this.room.clueHistory[player.id] = [...history, player.clue];
+  }
+
+  /** Returns true when another configured Clue Round has started. */
+  private completeClueRound(): boolean {
+    this.room.completedClueRounds += 1;
+    if (this.room.completedClueRounds >= this.room.settings.requiredClueRoundsBeforeVoting) return false;
+    this.room.currentClueRound += 1;
+    this.room.currentTurn = 0;
+    for (const player of this.activeSeats()) {
+      player.clue = null;
+      player.clueDrawing = null;
+      player.clueRevealed = false;
+      player.clueSkipped = false;
+    }
+    this.room.message = `Clue Round ${this.room.completedClueRounds} complete. Starting Clue Round ${this.room.currentClueRound}.`;
+    return true;
   }
 
   private enterDiscussion(): void {
@@ -510,6 +555,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private enterVoting(): void {
+    if (this.room.completedClueRounds < this.room.settings.requiredClueRoundsBeforeVoting) throw new Error('Voting stays locked until every configured Clue Round is complete.');
     this.room.stage = 'VOTING';
     this.clearTimer();
     const seats = this.activeSeats();
@@ -522,6 +568,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async revealVotes(): Promise<void> {
+    if (this.room.completedClueRounds < this.room.settings.requiredClueRoundsBeforeVoting) throw new Error('Voting stays locked until every configured Clue Round is complete.');
     this.clearTimer();
     const seats = this.activeSeats();
     const votes = Object.fromEntries(seats.filter((player) => player.vote).map((player) => [player.id, player.vote!]));
@@ -577,7 +624,9 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private finalizeRound(): void {
+    if (this.room.result || ['ROUND_REVEAL', 'ROUND_RECAP', 'SCOREBOARD', 'MATCH_COMPLETE'].includes(this.room.stage)) throw new Error('This Game Round has already been scored.');
     if (!this.room.word) throw new Error('The secret word went missing. Restart this round.');
+    if (this.caughtMoles().some((player) => !player.guess)) throw new Error('Every caught Mole must resolve a Final Guess before scoring.');
     const seats = this.activeSeats();
     const result = scoreRound({
       playerIds: seats.map((player) => player.id),
@@ -592,9 +641,10 @@ export class GameRoom extends DurableObject<Env> {
     this.room.stage = 'ROUND_REVEAL';
     this.room.history = [...this.room.history.slice(-23), {
       roundNumber: this.room.roundNumber, word: this.room.word.display, category: this.room.word.category,
-      result, clues: seats.map((player) => ({ playerId: player.id, clue: player.clue ?? undefined, anonymous: this.room.settings.anonymousClues })),
+      result, clues: seats.flatMap((player) => (this.room.clueHistory[player.id] ?? []).map((clue) => ({ playerId: player.id, clue, anonymous: this.room.settings.anonymousClues }))),
       voteTotals: this.room.votesRevealed ?? {}, createdAt: Date.now()
     }];
+    for (const player of seats) { player.vote = null; player.voteConfidence = null; player.guess = null; player.guessCorrect = undefined; player.note = ''; player.botMind = undefined; }
     this.clearTimer();
     this.metric('round_completed', { seats: seats.length, caught: result.caughtMoleIds.length, aiFallback: false });
   }
@@ -798,6 +848,8 @@ export class GameRoom extends DurableObject<Env> {
       code: this.room.code,
       stage: this.room.stage,
       roundNumber: this.room.roundNumber,
+      currentClueRound: this.room.currentClueRound,
+      completedClueRounds: this.room.completedClueRounds,
       players: this.room.players.filter((player) => !player.display).map((player) => ({
         id: player.id, name: player.name, kind: player.kind, score: player.score, roundGain: player.roundGain,
         host: player.host, connected: player.connected, ready: hideIndividualReady ? false : player.ready,

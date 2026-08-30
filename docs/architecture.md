@@ -29,7 +29,7 @@ The frontend is built to static assets and served by the same Worker, so product
 
 `@moley/game-core/local` owns local round setup, role assignment, randomized clue order, deterministic bot decisions, voting, scoring, and rematches. It reuses the canonical board builder, catalog filtering, Mole guess, scoring, fair turn ordering, bot discussion, normalization, vote reasoning, and word metadata used by online rooms. The Local Play React route does not initialize runtime configuration, create a WebSocket, call Workers AI, or use a room API.
 
-Active state is stored in IndexedDB after every transition. An encoded localStorage write-ahead copy closes the small gap while an IndexedDB transaction is committing; recovery chooses the newest valid copy. Schema-1 saves migrate to schema 2; damaged identities, unsupported versions, or structurally invalid private state fail closed. Private role/vote/guess visibility is UI-only state and is never persisted, so reload, Back, Forward, page hiding, and orientation remounts return to a neutral handoff screen.
+Active state is stored in IndexedDB after every transition. An encoded localStorage write-ahead copy closes the small gap while an IndexedDB transaction is committing; recovery chooses the newest valid copy. Schema-1 and schema-2 saves migrate to schema 3 with explicit Clue Round and locked Final Guess state; damaged identities, unsupported versions, or structurally invalid private state fail closed. Private reveal visibility is UI-only, so reload, Back, Forward, page hiding, and orientation remounts return to a neutral handoff screen.
 
 Local TV is not a second authority. `toLocalPublicDisplay()` creates a strict allowlisted projection, publishes it through a session-scoped BroadcastChannel and localStorage fallback, and validates it again in the display window. The display can attach, reload, detach, and reopen mid-match without receiving the local authority object.
 
@@ -57,7 +57,7 @@ Persisted room snapshots are normalized against current defaults when a Durable 
 
 ## Compatibility and feature operations
 
-The browser sends `clientVersion` and protocol 3 on WebSocket connection. The Worker advertises its supported protocol range from `/api/config` and rejects incompatible clients before accepting a socket. The Worker also validates Origin and the negotiated `moley.v3` subprotocol. A current client presents a refresh-and-rejoin screen; the reconnect token remains device-local.
+The browser sends `clientVersion` and protocol 4 on WebSocket connection. The Worker advertises its supported protocol range from `/api/config` and rejects incompatible clients before accepting a socket. The Worker also validates Origin and the negotiated `moley.v4` subprotocol. A current client presents a refresh-and-rejoin screen; the reconnect token remains device-local.
 
 Feature lifecycle state is centrally typed and re-evaluated on room traffic. Security-sensitive controls are enforced in `GameRoom`, so a stale or modified client cannot use a killed feature. See `docs/feature-flags.md`.
 

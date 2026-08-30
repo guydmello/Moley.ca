@@ -109,6 +109,12 @@ test('server blocks host escalation, stale events, and custom-word projection le
   for (const client of [host, player, second, third]) client!.send('player_ready', { ready: true });
   for (const client of clients) await client.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'CLUE_TURN');
 
+  const earlyTarget = host!.latestSnapshot()!.public!.players.find((candidate) => candidate.id !== playerSessions[0]!.playerId && candidate.kind !== 'spectator')!;
+  player!.send('submit_vote', { playerId: earlyTarget.id });
+  await player!.waitFor((event) => event.type === 'error' && /Voting is not open yet/.test(event.message ?? ''));
+  player!.send('submit_mole_guess', { guess: 'TOPSECRET' });
+  await player!.waitFor((event) => event.type === 'error' && /do not have a typed guess/.test(event.message ?? ''));
+
   const snapshots = clients.map((client) => client.latestSnapshot()!);
   const mole = snapshots.find((snapshot) => snapshot.private?.role === 'mole');
   const innocent = snapshots.find((snapshot) => snapshot.private?.role === 'innocent');
@@ -122,21 +128,55 @@ test('server blocks host escalation, stale events, and custom-word projection le
   expect(JSON.stringify(display!.latestSnapshot())).not.toContain(displaySession.sessionToken);
   for (const snapshot of snapshots) expect(snapshot.public?.settings.customWords).toEqual([]);
 
+  const gameRoundOrder = host!.latestSnapshot()!.public!.turnOrder;
+  const clueRoundsSeen = new Set<number>();
   while (host!.latestSnapshot()?.public?.stage === 'CLUE_TURN') {
+    clueRoundsSeen.add(host!.latestSnapshot()!.public!.currentClueRound);
+    expect(host!.latestSnapshot()!.public!.turnOrder).toEqual(gameRoundOrder);
     const after = host!.events.length;
     host!.send('host_advance');
     await host!.waitForNew((event) => event.type === 'room_snapshot', after);
   }
+  expect([...clueRoundsSeen]).toEqual([1, 2]);
+  expect(host!.latestSnapshot()?.public?.completedClueRounds).toBe(2);
   expect(host!.latestSnapshot()?.public?.stage).toBe('DISCUSSION');
   let after = host!.events.length;
   host!.send('host_advance');
   await host!.waitForNew((event) => event.type === 'room_snapshot' && event.public?.stage === 'VOTING', after);
-  const target = player!.latestSnapshot()!.public!.players.find((candidate) => candidate.id !== playerSessions[0]!.playerId && candidate.kind !== 'spectator')!;
+  const seatClients = [host!, player!, second!, third!];
+  const moleClient = seatClients.find((client) => client.latestSnapshot()?.private?.role === 'mole')!;
+  const moleId = moleClient.latestSnapshot()!.private!.playerId;
+  const playerId = player!.latestSnapshot()!.private!.playerId;
+  const target = player!.latestSnapshot()!.public!.players.find((candidate) => candidate.kind !== 'spectator' && candidate.id === (playerId === moleId
+    ? player!.latestSnapshot()!.public!.players.find((seat) => seat.kind !== 'spectator' && seat.id !== playerId)!.id
+    : moleId))!;
   after = player!.events.length;
   player!.send('submit_vote', { playerId: target.id });
   await player!.waitForNew((event) => event.type === 'room_snapshot' && event.private?.submittedVote === target.id, after);
   player!.send('submit_vote', { playerId: target.id });
   await player!.waitFor((event) => event.type === 'error' && /already locked/.test(event.message ?? ''));
+
+  for (const client of seatClients.filter((candidate) => candidate !== player)) {
+    const selfId = client.latestSnapshot()!.private!.playerId;
+    const voteTarget = selfId === moleId
+      ? client.latestSnapshot()!.public!.players.find((candidate) => candidate.kind !== 'spectator' && candidate.id !== selfId)!.id
+      : moleId;
+    client.send('submit_vote', { playerId: voteTarget });
+  }
+  const guessing = await host!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'MOLE_GUESS');
+  expect(guessing.public?.revealedWord).toBeNull();
+  expect(guessing.public?.result).toBeNull();
+  expect(JSON.stringify(display!.latestSnapshot())).not.toContain('TOPSECRET');
+  const privateGuess = await moleClient.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'MOLE_GUESS');
+  expect(privateGuess.private?.mustGuess).toBe(true);
+  moleClient.send('submit_mole_guess', { guess: 'definitely wrong' });
+  const reveal = await host!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'ROUND_REVEAL');
+  expect(reveal.public?.revealedWord).toBe('TOPSECRET');
+  expect(reveal.public?.result?.moleGuesses[moleId]).toBe('definitely wrong');
+  expect(reveal.public?.result?.gains[moleId]).toBe(0);
+  for (const innocent of reveal.public!.players.filter((candidate) => candidate.kind !== 'spectator' && candidate.id !== moleId)) {
+    expect(reveal.public?.result?.gains[innocent.id]).toBe(2);
+  }
 
   clients.forEach((client) => client.close());
 });
