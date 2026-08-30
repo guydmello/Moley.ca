@@ -219,6 +219,68 @@ test('invalid reconnect credentials cannot open a room socket', async ({ request
   socket.close();
 });
 
+test('two caught Moles must each lock one guess before reveal and score independently', async ({ request, baseURL }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Multi-Mole authority and reveal gating run once against the Worker.');
+  const hostSession = await create(request, 'Two Mole Host', {
+    preset: 'custom', clueMode: 'spoken', guessMode: 'typed', moleCount: 2,
+    requiredClueRoundsBeforeVoting: 1, customWords: ['TOPSECRET'], targetScore: 5,
+    discussionSeconds: 0, votingSeconds: 0, guessSeconds: 0
+  });
+  const playerSessions = await Promise.all(['Avery', 'Blair', 'Casey', 'Devon', 'Emery'].map((name) => join(request, hostSession.code, name)));
+  const seatClients = await openClients(baseURL!, [hostSession, ...playerSessions]);
+  const [host] = seatClients;
+
+  host!.send('host_start');
+  for (const client of seatClients) await client.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'ROLE_REVEAL');
+  for (const client of seatClients) client.send('player_ready', { ready: true });
+  for (const client of seatClients) await client.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'CLUE_TURN');
+
+  while (host!.latestSnapshot()?.public?.stage === 'CLUE_TURN') {
+    const after = host!.events.length;
+    host!.send('host_advance');
+    await host!.waitForNew((event) => event.type === 'room_snapshot', after);
+  }
+  expect(host!.latestSnapshot()?.public?.stage).toBe('DISCUSSION');
+  let after = host!.events.length;
+  host!.send('host_advance');
+  await host!.waitForNew((event) => event.type === 'room_snapshot' && event.public?.stage === 'VOTING', after);
+
+  const moleClients = seatClients.filter((client) => client.latestSnapshot()?.private?.role === 'mole');
+  expect(moleClients).toHaveLength(2);
+  const moleIds = moleClients.map((client) => client.latestSnapshot()!.private!.playerId);
+  for (const [index, client] of seatClients.entries()) {
+    const selfId = client.latestSnapshot()!.private!.playerId;
+    let targetId = moleIds[index % 2]!;
+    if (targetId === selfId) targetId = moleIds.find((id) => id !== selfId)!;
+    client.send('submit_vote', { playerId: targetId });
+  }
+
+  const guessing = await host!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'MOLE_GUESS');
+  expect(guessing.public?.accusedIds).toEqual(expect.arrayContaining(moleIds));
+  expect(guessing.public?.revealedWord).toBeNull();
+  expect(guessing.public?.result).toBeNull();
+
+  after = host!.events.length;
+  moleClients[0]!.send('submit_mole_guess', { guess: 'TOPSECRET' });
+  const waiting = await host!.waitForNew((event) => event.type === 'room_snapshot' && event.public?.stage === 'MOLE_GUESS', after);
+  expect(waiting.public?.revealedWord).toBeNull();
+  expect(waiting.public?.result).toBeNull();
+  await moleClients[1]!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'MOLE_GUESS' && event.private?.mustGuess === true);
+  moleClients[0]!.send('submit_mole_guess', { guess: 'second attempt' });
+  await moleClients[0]!.waitFor((event) => event.type === 'error' && /already locked/.test(event.message ?? ''));
+
+  moleClients[1]!.send('submit_mole_guess', { guess: 'definitely wrong' });
+  const reveal = await host!.waitFor((event) => event.type === 'room_snapshot' && event.public?.stage === 'ROUND_REVEAL');
+  expect(reveal.public?.revealedWord).toBe('TOPSECRET');
+  expect(reveal.public?.result?.caughtMoleIds).toEqual(expect.arrayContaining(moleIds));
+  expect(reveal.public?.result?.correctGuessMoleIds).toEqual([moleIds[0]]);
+  expect(reveal.public?.result?.gains[moleIds[0]!]).toBe(1);
+  expect(reveal.public?.result?.gains[moleIds[1]!]).toBe(0);
+  for (const innocent of reveal.public!.players.filter((player) => !moleIds.includes(player.id))) expect(reveal.public?.result?.gains[innocent.id]).toBe(0);
+
+  seatClients.forEach((client) => client.close());
+});
+
 test('protocol 2, 3, 5, missing, invalid, and forged envelopes fail closed', async ({ request, baseURL }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Protocol compatibility matrix runs once against the authoritative Worker.');
   const session = await create(request, 'Compatibility Host');

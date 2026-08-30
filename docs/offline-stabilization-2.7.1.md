@@ -51,8 +51,8 @@ Date: 2026-08-30
 
 ## Tests
 
-- `npm run check`: passed type checking, linting, 84 Vitest unit/integration tests in seven files, the production PWA build, and the Worker dry-run.
-- Final `npm run test:e2e`: 49 applicable Playwright cases passed and 71 project-scoped cases were intentionally skipped, with zero failures across mobile Chromium, desktop Chromium, Firefox, WebKit, and iOS WebKit projects.
+- The original 2.7.1 gate passed type checking, linting, 84 Vitest unit/integration tests in seven files, the production PWA build, the Worker dry-run, and 49 applicable Playwright cases with zero failures.
+- The final hardening evidence is superseded by `docs/release-hardening-2.7.2.md`, which records the expanded 88-test unit gate, 160-case browser matrix, bot audit, integrated migration, protocol matrix, and production smoke.
 - Focused cross-browser home regression: 10 of 10 passed.
 - Added direct coverage for one through five Clue Rounds, stable order, early-action rejection, human and bot Final Guess locking, exact scoring, idempotency, schema migration, offline recovery, TV privacy, reconnects, and hosted authority boundaries.
 - Dependency audit: zero known vulnerabilities at validation time.
@@ -69,4 +69,4 @@ Date: 2026-08-30
 
 - Automated browser emulation cannot replace a physical HDMI/TV session, real-device assistive-technology testing, or extended human playtesting. Those are recommended release follow-ups, not known software blockers.
 - Optional early-ending of clue collection was intentionally not added; every configured Clue Round is required before voting.
-- The previous production commit `0b07b95` remains the rollback reference until 2.7.1 is deployed and live-verified.
+- `a92b8b65beded386bfc4efba8c07ca0bd341aa26` is the known-good 2.7.1 production baseline. The accessibility hardening patch advanced production to 2.7.2 at `a6f159369b9b7e122dc671a0036f0ece3b0094aa`; `0b07b95d2448610720174590af0579409da54df1` remains the historical 2.7.0 fallback point.
