@@ -36,6 +36,11 @@ describe('scoring', () => {
     expect(scoreRound({ playerIds: ['a', 'b', 'c', 'd'], moleIds: ['a', 'b'], accusedIds: ['a', 'b'], guesses: { a: { guess: 'pear' }, b: { guess: 'plum' } }, word }).gains).toEqual({ a: 0, b: 0, c: 2, d: 2 });
     expect(scoreRound({ playerIds: ['a', 'b', 'c', 'd'], moleIds: ['a', 'b'], accusedIds: ['a'], guesses: { a: { guess: 'pear' } }, word }).gains.c).toBe(0);
   });
+  it('scores mixed multi-Mole outcomes without leaking points across sides', () => {
+    expect(scoreRound({ playerIds: ['a', 'b', 'c', 'd'], moleIds: ['a', 'b'], accusedIds: ['a'], guesses: { a: { guess: 'apple' } }, word }).gains).toEqual({ a: 1, b: 2, c: 0, d: 0 });
+    expect(scoreRound({ playerIds: ['a', 'b', 'c', 'd'], moleIds: ['a', 'b'], accusedIds: ['a', 'b'], guesses: { a: { guess: 'apple' }, b: { guess: 'pear' } }, word }).gains).toEqual({ a: 1, b: 0, c: 0, d: 0 });
+    expect(scoreRound({ playerIds: ['a', 'b', 'c', 'd'], moleIds: ['a', 'b'], accusedIds: ['a', 'b'], guesses: {}, word }).gains).toEqual({ a: 0, b: 0, c: 2, d: 2 });
+  });
   it('treats a caught Mole timeout or missing guess as incorrect', () => {
     const result = scoreRound({ playerIds: ['a', 'b', 'c', 'd'], moleIds: ['a'], accusedIds: ['a'], guesses: {}, word });
     expect(result.gains).toEqual({ a: 0, b: 2, c: 2, d: 2 });
@@ -43,6 +48,9 @@ describe('scoring', () => {
   });
   it('supports co-winners and endless mode', () => {
     expect(findWinners({ a: 5, b: 5, c: 3 }, defaultSettings)).toEqual(['a', 'b']);
+    expect(findWinners({ a: 5, b: 4 }, defaultSettings)).toEqual(['a']);
+    expect(findWinners({ a: 7, b: 6, c: 4 }, defaultSettings)).toEqual(['a']);
+    expect(findWinners({ a: 7, b: 7, c: 6 }, defaultSettings)).toEqual(['a', 'b']);
     expect(findWinners({ a: 50 }, { ...defaultSettings, targetScore: null })).toEqual([]);
   });
 });

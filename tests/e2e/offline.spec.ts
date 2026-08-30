@@ -1,7 +1,15 @@
 import { expect, test, type Page } from '@playwright/test';
 
 type SavedLocalState = {
+  schemaVersion: number;
   stage: string;
+  settings: Record<string, unknown>;
+  boardIds: string[];
+  secretWordId: string | null;
+  turnOrder: string[];
+  currentTurn: number;
+  currentClueRound: number;
+  completedClueRounds: number;
   players: { id: string; name: string; kind: 'human' | 'bot'; score: number; roundGain: number }[];
   moleIds: string[];
   votes: Record<string, string>;
@@ -119,7 +127,7 @@ test('cached production PWA completes, restores, and rematches a true offline lo
 
 test('four humans and two bots complete two offline Clue Rounds and a mandatory Final Guess', async ({ page, context }, testInfo) => {
   test.setTimeout(120_000);
-  test.skip(testInfo.project.name !== 'desktop', 'The full six-seat offline acceptance path runs once in Chromium.');
+  test.skip(testInfo.project.name !== 'desktop', 'Playwright WebKit cannot reliably reload a service-worker page after offline emulation; Chromium runs the true-offline path.');
   const productionOrigin = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8787';
   await page.goto(`${productionOrigin}/local`);
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
@@ -196,6 +204,59 @@ test('four humans and two bots complete two offline Clue Rounds and a mandatory 
   expect(scored.result?.caughtMoleIds).toContain(moleId);
   if (scored.result?.correctGuessMoleIds.includes(moleId)) expect(scored.result.gains[moleId]).toBe(1);
   else for (const player of scored.players.filter((candidate) => candidate.id !== moleId)) expect(scored.result?.gains[player.id]).toBe(2);
+  expect(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => entry.name.includes('/api/')))).toBe(false);
+});
+
+test('a cached PWA migrates a mid-round schema-2 save and finishes offline', async ({ page, context }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(testInfo.project.name !== 'desktop', 'Integrated service-worker and schema migration runs once in Chromium.');
+  const productionOrigin = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8787';
+  await page.goto(`${productionOrigin}/local`);
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await page.getByPlaceholder('Player 1').fill('Alex');
+  for (let index = 0; index < 3; index++) await page.getByRole('button', { name: 'Add bot' }).click();
+  await page.getByLabel('Fast Bots').check();
+  await page.getByRole('button', { name: /Start game locally/i }).click();
+  await finishRoleHandoff(page);
+  await playClueTurn(page, 'legacy mid-round clue');
+  await expect.poll(async () => (await savedLocalState(page)).currentTurn).toBe(1);
+  const before = await savedLocalState(page);
+
+  await page.evaluate(() => {
+    const encoded = localStorage.getItem('moley:local:recovery')!;
+    const binary = atob(encoded);
+    const state = JSON.parse(new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)))) as Record<string, unknown>;
+    state.schemaVersion = 2;
+    const settings = state.settings as Record<string, unknown>;
+    delete settings.requiredClueRoundsBeforeVoting;
+    delete settings.haptics;
+    delete state.currentClueRound;
+    delete state.completedClueRounds;
+    delete state.clueHistory;
+    delete state.moleFinalGuess;
+    delete state.roundScored;
+    state.updatedAt = Date.now() + 60_000;
+    const bytes = new TextEncoder().encode(JSON.stringify(state));
+    let nextBinary = '';
+    for (const byte of bytes) nextBinary += String.fromCharCode(byte);
+    localStorage.setItem('moley:local:recovery', btoa(nextBinary));
+  });
+
+  await context.setOffline(true);
+  await page.reload();
+  await page.getByRole('button', { name: /Resume Local Game/i }).click();
+  await expect.poll(async () => (await savedLocalState(page)).schemaVersion).toBe(3);
+  const migrated = await savedLocalState(page);
+  expect(migrated.boardIds).toEqual(before.boardIds);
+  expect(migrated.secretWordId).toBe(before.secretWordId);
+  expect(migrated.turnOrder).toEqual(before.turnOrder);
+  expect(migrated.currentTurn).toBe(before.currentTurn);
+  expect(migrated.currentClueRound).toBe(1);
+  expect(migrated.completedClueRounds).toBe(0);
+
+  await finishClues(page);
+  await finishVoteAndRound(page);
+  expect((await savedLocalState(page)).roundScored).toBe(true);
   expect(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => entry.name.includes('/api/')))).toBe(false);
 });
 

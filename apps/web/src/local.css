@@ -35,3 +35,4 @@ html:not([data-local-private="revealed"]) .local-guess-private .shared-word-boar
 .local-display-secret{display:block;margin:14px 0 28px;color:var(--orange);font-size:clamp(52px,9vw,126px);line-height:.9;letter-spacing:-.06em;text-transform:uppercase}
 .local-display-scores{max-width:850px;margin:30px auto 0}.local-display-scores>div{font-size:clamp(14px,1.4vw,20px)}
 @media(max-width:820px){.local-display-header{align-items:flex-start}.local-display-header strong{justify-content:flex-end;text-align:right}.local-display-grid{grid-template-columns:1fr}.local-display-page>main{width:min(100% - 18px,1480px);padding-top:22px}.local-display-grid>section,.local-display-clues,.local-display-wait,.local-display-result{border-radius:20px;padding:20px}.local-display-clues>div{grid-template-columns:28px minmax(65px,1fr) minmax(80px,1.4fr) 18px}.online-board{padding:0 10px}}
+.local-scoreboard small{color:#a93320}

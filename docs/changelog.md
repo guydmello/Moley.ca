@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.7.2 — 2026-08-30
+
+- Corrected the Local round-score gain colour to meet WCAG AA contrast on the white scoreboard surface.
+- Added deterministic browser acceptance for caught human and Bot Mole Final Guesses, correct and incorrect guesses, the Mole escape path, private reveal gating, refresh recovery, exact scoring, and stage-by-stage accessibility scans.
+- Added an integrated cached-PWA schema 2 to schema 3 mid-round migration test, a protocol compatibility matrix, explicit multi-Mole and win-threshold scoring coverage, and a permanent 1,425-clue Normal-bot quality audit.
+- Protocol remains 4 and Local persistence remains schema 3; there are no gameplay-rule, infrastructure, or data-format changes in this patch.
+
 ## 2.7.1 — 2026-08-27
 
 - Added explicit one-to-five Clue Rounds before voting across local and online authority; Classic defaults to two, Quick to one, and longer local presets to three through five.

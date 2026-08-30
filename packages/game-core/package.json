@@ -1,13 +1,13 @@
 {
   "name": "@moley/game-core",
-  "version": "2.7.1",
+  "version": "2.7.2",
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
   "scripts": { "typecheck": "tsc -p tsconfig.json" },
   "dependencies": {
-    "@moley/shared": "2.7.1",
-    "@moley/word-packs": "2.7.1"
+    "@moley/shared": "2.7.2",
+    "@moley/word-packs": "2.7.2"
   },
   "devDependencies": { "typescript": "latest", "vitest": "latest" }
 }

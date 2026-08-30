@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { botSupportedWords, words } from '@moley/word-packs';
 import {
   advanceLocalRole, beginLocalVoting, buildLocalCatalog, createLocalGame, createLocalPlayer, fairTurnOrder,
-  finishLocalRound, innocentBotClue, localSettingsForPreset, lockLocalMoleGuess, migrateLocalState, playLocalClue,
+  finishLocalRound, innocentBotClue, localSettingsForPreset, lockLocalMoleGuess, migrateLocalState, normalizeClueKey, playLocalClue,
   resolveLocalVoting, startLocalRound, submitLocalVote, toLocalPublicDisplay, validateLocalPublicDisplay, validateLocalRoster, validateLocalState
 } from './index';
 
@@ -82,6 +82,26 @@ describe('deterministic bot clues', () => {
     expect(normal.every((clue) => !dog.botClues!.direct.includes(clue))).toBe(true);
     expect(normal.every((clue) => [...dog.botClues!.medium, ...dog.botClues!.subtle].includes(clue))).toBe(true);
   });
+
+  it('keeps a seeded 1,425-clue Normal-mode audit curated, indirect, and duplicate-free', () => {
+    const random = seeded(20260830);
+    let generated = 0;
+    for (const word of botSupportedWords) {
+      for (let run = 0; run < 25; run++) {
+        const used: string[] = [];
+        for (let clueRound = 0; clueRound < 3; clueRound++) {
+          const clue = innocentBotClue(word, used, 'normal', random, 'detective');
+          expect(word.botClues!.direct).not.toContain(clue);
+          expect([...word.botClues!.medium, ...word.botClues!.subtle]).toContain(clue);
+          expect(used.map(normalizeClueKey)).not.toContain(normalizeClueKey(clue));
+          used.push(clue);
+          generated++;
+        }
+      }
+    }
+    expect(botSupportedWords).toHaveLength(19);
+    expect(generated).toBe(1_425);
+  });
 });
 
 describe('complete offline local engine', () => {
@@ -154,6 +174,52 @@ describe('local persistence and public projection', () => {
     expect(validateLocalState(migrated, words)).toBe(true);
   });
 
+  it('migrates representative schema-2 stages without unlocking voting early', () => {
+    const random = seeded(83);
+    let clues = startLocalRound(createLocalGame(roster(2, 2), localSettingsForPreset('local-classic'), random), words, random);
+    while (clues.stage === 'roles') clues = advanceLocalRole(clues);
+    const midClues = playLocalClue(clues, words, clues.players.find((player) => player.id === clues.turnOrder[0])?.kind === 'human' ? 'legacy clue' : undefined, random);
+    let discussion = midClues;
+    while (discussion.stage === 'clues') {
+      const current = discussion.players.find((player) => player.id === discussion.turnOrder[discussion.currentTurn])!;
+      discussion = playLocalClue(discussion, words, current.kind === 'human' ? `legacy ${discussion.currentTurn}` : undefined, random);
+    }
+    const voting = beginLocalVoting(discussion, words, random);
+    const nonMole = voting.players.find((player) => player.active && !voting.moleIds.includes(player.id))!;
+    const alternate = voting.players.find((player) => player.active && player.id !== nonMole.id)!;
+    const escaped = resolveLocalVoting({
+      ...voting,
+      votes: Object.fromEntries(voting.players.filter((player) => player.active).map((player) => [player.id, player.id === nonMole.id ? alternate.id : nonMole.id]))
+    }, words, random);
+    expect(escaped.stage).toBe('result');
+
+    const cases = [
+      ['before clues', { ...clues, stage: 'roles' as const, roleIndex: 0 }, 0],
+      ['mid clue round', midClues, 0],
+      ['between legacy passes', { ...clues, currentTurn: 0, clues: {} }, 0],
+      ['discussion', discussion, 2],
+      ['voting', voting, 2],
+      ['round result', escaped, 2]
+    ] as const;
+
+    for (const [label, state, expectedCompleted] of cases) {
+      const legacy = structuredClone(state) as unknown as Record<string, unknown>;
+      legacy.schemaVersion = 2;
+      delete (legacy.settings as Record<string, unknown>).requiredClueRoundsBeforeVoting;
+      delete legacy.currentClueRound;
+      delete legacy.completedClueRounds;
+      delete legacy.clueHistory;
+      delete legacy.moleFinalGuess;
+      delete legacy.roundScored;
+      const migrated = migrateLocalState(legacy, words);
+      expect(migrated, label).not.toBeNull();
+      expect(migrated?.completedClueRounds, label).toBe(expectedCompleted);
+      expect(migrated?.turnOrder, label).toEqual(state.turnOrder);
+      expect(migrated?.boardIds, label).toEqual(state.boardIds);
+      if (expectedCompleted === 0) expect(() => beginLocalVoting({ ...migrated!, stage: 'discussion' }, words), label).toThrow(/locked/i);
+    }
+  });
+
   it('fails closed on damaged identities and unsupported schema versions', () => {
     const state = createLocalGame(roster(), localSettingsForPreset('local-classic'), seeded(90));
     const duplicate = structuredClone(state);
@@ -179,6 +245,17 @@ describe('local persistence and public projection', () => {
     expect(snapshot.result).toBeNull();
     expect(snapshot.visibility).toBe('pass');
     expect(snapshot.voteCount).toBe(1);
+  });
+
+  it('keeps a locked Final Guess out of the public TV projection until reveal', () => {
+    const started = startLocalRound(createLocalGame(roster(), localSettingsForPreset('local-bots'), seeded(93)), words, seeded(94));
+    const mole = started.players[0]!;
+    const privateGuess = { ...started, stage: 'guess' as const, moleIds: [mole.id], accusedIds: [mole.id], moleFinalGuess: { playerId: mole.id, guess: 'Apple' } };
+    const snapshot = toLocalPublicDisplay(privateGuess, words);
+    expect(snapshot.stage).toBe('guess');
+    expect(snapshot.result).toBeNull();
+    expect(JSON.stringify(snapshot)).not.toMatch(/Apple|moleFinalGuess|"guess":/i);
+    expect(validateLocalPublicDisplay(snapshot, started.sessionId)).toBe(true);
   });
 });
 

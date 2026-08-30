@@ -42,6 +42,8 @@ class LiveClient {
     this.socket.send(JSON.stringify({ v: PROTOCOL_VERSION, id: crypto.randomUUID(), seq, type, ...fields }));
   }
 
+  sendRaw(value: unknown): void { this.socket.send(JSON.stringify(value)); }
+
   async waitFor(predicate: (event: ServerEnvelope) => boolean, timeout = 8_000): Promise<ServerEnvelope> {
     const started = Date.now();
     while (Date.now() - started < timeout) {
@@ -215,6 +217,40 @@ test('invalid reconnect credentials cannot open a room socket', async ({ request
   });
   expect(result).toBe('rejected');
   socket.close();
+});
+
+test('protocol 2, 3, 5, missing, invalid, and forged envelopes fail closed', async ({ request, baseURL }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Protocol compatibility matrix runs once against the authoritative Worker.');
+  const session = await create(request, 'Compatibility Host');
+  const origin = new URL(baseURL!).origin;
+  const rejectHandshake = async (protocol: string | null) => {
+    const query = new URLSearchParams({ clientVersion: protocol === null ? '' : protocol === '3' ? '2.7.0' : APP_VERSION });
+    if (protocol !== null) query.set('protocol', protocol);
+    const url = `${baseURL!.replace(/^http/, 'ws')}/api/rooms/${session.code}/connect?${query}`;
+    const socket = new WebSocket(url, [`moley.v${PROTOCOL_VERSION}`, `session.${session.sessionToken}`], { origin });
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+      socket.once('open', () => reject(new Error(`Protocol ${String(protocol)} unexpectedly connected.`)));
+      socket.once('unexpected-response', (_request, response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on('end', () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }));
+      });
+      socket.once('error', () => { /* unexpected-response carries the authoritative HTTP result */ });
+    });
+  };
+
+  for (const protocol of ['2', '3', '5', 'invalid', null]) {
+    const rejection = await rejectHandshake(protocol);
+    expect(rejection.status).toBe(426);
+    expect(rejection.body).toMatch(/refresh|Client version is required/i);
+  }
+
+  const current = await LiveClient.open(baseURL!, session);
+  const after = current.events.length;
+  current.sendRaw({ v: 3, id: crypto.randomUUID(), seq: 1, type: 'heartbeat' });
+  await current.waitForNew((event) => event.type === 'error' && /not valid/.test(event.message ?? ''), after);
+  expect(current.latestSnapshot()?.public?.stage).toBe('ROOM_LOBBY');
+  current.close();
 });
 
 test('audience actions remain private and role-scoped before round reveal', async ({ request, baseURL }, testInfo) => {
